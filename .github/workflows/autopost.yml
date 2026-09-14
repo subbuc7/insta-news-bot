@@ -1,0 +1,41 @@
+name: Auto Post Today's News to Instagram
+
+on:
+  schedule:
+    # Runs every 30 minutes in the cloud 24/7
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # Gives you a manual "Run workflow" button
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          pip install pillow requests
+
+      - name: Run News Bot
+        env:
+          INSTAGRAM_ACCOUNT_ID: ${{ secrets.INSTAGRAM_ACCOUNT_ID }}
+          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+        run: |
+          python autopost.py
+
+      - name: Save History to Repo
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add posted_history.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: update posted history [skip ci]" && git push)
+          
