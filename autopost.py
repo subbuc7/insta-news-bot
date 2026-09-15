@@ -3,6 +3,7 @@ import sys
 import json
 import time
 import re
+import html
 from io import BytesIO
 import requests
 import xml.etree.ElementTree as ET
@@ -15,16 +16,14 @@ TRIGGER_TYPE = os.getenv("TRIGGER_TYPE", "")
 IST = timezone(timedelta(hours=5, minutes=30))
 HISTORY_FILE = "posted_history.json"
 
-# Dedicated regional feeds for Andhra Pradesh and Telangana
 FEEDS = [
     "https://www.thehindu.com/news/national/andhra-pradesh/feeder/default.rss",
     "https://www.thehindu.com/news/national/telangana/feeder/default.rss"
 ]
 
-# Guaranteed unique background photo pool per slide
 UNIQUE_FALLBACK_IMAGES = [
     "https://images.unsplash.com/photo-1541872703-74c5e44368f9?w=1080&q=80",  # Slide 1: Amaravati / State Governance
-    "https://images.unsplash.com/photo-1605379399642-870262d3d051?w=1080&q=80",  # Slide 2: Hyderabad Skyline / Infrastructure
+    "https://images.unsplash.com/photo-1605379399642-870262d3d051?w=1080&q=80",  # Slide 2: Hyderabad Skyline / City
     "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?w=1080&q=80",  # Slide 3: Recruitment / Public Administration
     "https://images.unsplash.com/photo-1609766857041-ed402ea8069a?w=1080&q=80",  # Slide 4: Tirumala / Temple & Heritage
     "https://images.unsplash.com/photo-1519692933481-e162a57d6721?w=1080&q=80",  # Slide 5: Weather & Regional Transit
@@ -43,6 +42,12 @@ def save_history(history):
     with open(HISTORY_FILE, "w") as f:
         json.dump(history[-200:], f, indent=2)
 
+def clean_text(raw_html):
+    """Strips HTML tags and unescapes entities."""
+    clean = re.sub(r'<[^>]+>', '', raw_html)
+    clean = html.unescape(clean)
+    return " ".join(clean.split())
+
 def fetch_top_5_news():
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     history = load_history()
@@ -60,10 +65,12 @@ def fetch_top_5_news():
                 link = item.find("link").text if item.find("link") is not None else ""
                 guid = item.find("guid").text if item.find("guid") is not None else link
 
+                desc_elem = item.find("description")
+                desc_text = clean_text(desc_elem.text) if desc_elem is not None and desc_elem.text else ""
+
                 if not title or not link:
                     continue
 
-                # Check if image is directly embedded in RSS tag
                 direct_img = ""
                 for elem in item.iter():
                     if elem.tag.endswith("content") and "url" in elem.attrib:
@@ -74,12 +81,12 @@ def fetch_top_5_news():
                         break
 
                 clean_title = title.split(" - ")[0].strip()
-                source = "The Hindu"
 
                 story = {
                     "guid": guid,
                     "title": clean_title,
-                    "source": source,
+                    "description": desc_text,
+                    "source": "The Hindu",
                     "link": link,
                     "rss_img": direct_img
                 }
@@ -95,9 +102,8 @@ def fetch_top_5_news():
         except Exception as e:
             print(f"Error reading feed {feed_url}: {e}")
 
-    # If triggered manually, guarantee 5 stories
     if TRIGGER_TYPE == "workflow_dispatch" and len(selected_stories) < 5:
-        print("Manual trigger detected: utilizing latest available stories.")
+        print("Manual click detected: utilizing latest available feed stories.")
         return fallback_stories
 
     return selected_stories
@@ -106,7 +112,7 @@ def get_unique_slide_image(story, slide_number):
     """Fetches a unique news photo for this story or assigns a dedicated per-slide fallback."""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-    # 1. Direct image from RSS if available
+    # 1. Direct image from RSS tag
     if story.get("rss_img") and story["rss_img"].startswith("http"):
         try:
             r = requests.get(story["rss_img"], headers=headers, timeout=8)
@@ -116,18 +122,24 @@ def get_unique_slide_image(story, slide_number):
         except Exception:
             pass
 
-    # 2. Extract og:image from the publisher's article page
+    # 2. Extract og:image and og:description from article URL
     try:
         if story.get("link"):
             res = requests.get(story["link"], headers=headers, timeout=6)
             if res.status_code == 200:
-                html = res.text
-                m = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', html, re.IGNORECASE)
-                if not m:
-                    m = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', html, re.IGNORECASE)
+                html_text = res.text
 
-                if m:
-                    img_url = m.group(1).strip()
+                # Check for richer description if available
+                m_desc = re.search(r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']', html_text, re.IGNORECASE)
+                if m_desc and len(m_desc.group(1).strip()) > len(story.get("description", "")):
+                    story["description"] = clean_text(m_desc.group(1).strip())
+
+                m_img = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', html_text, re.IGNORECASE)
+                if not m_img:
+                    m_img = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', html_text, re.IGNORECASE)
+
+                if m_img:
+                    img_url = m_img.group(1).strip()
                     blocked = ["googleusercontent.com", "google.com", "gstatic.com", "favicon", "logo"]
                     if img_url.startswith("http") and not any(b in img_url.lower() for b in blocked):
                         r = requests.get(img_url, headers=headers, timeout=8)
@@ -137,7 +149,7 @@ def get_unique_slide_image(story, slide_number):
     except Exception as e:
         print(f"Slide {slide_number}: og:image error: {e}")
 
-    # 3. Guaranteed unique fallback for each slide position (1 to 5)
+    # 3. Guaranteed unique fallback for each slide position
     fallback_url = UNIQUE_FALLBACK_IMAGES[(slide_number - 1) % len(UNIQUE_FALLBACK_IMAGES)]
     try:
         print(f"Slide {slide_number}: Using unique slide theme photo.")
@@ -153,7 +165,7 @@ def render_slide(story, slide_number, total_slides=5):
     W, H = 1080, 1350
     canvas = Image.new("RGB", (W, H), (6, 10, 16))
 
-    # Fetch dedicated unique image for this slide
+    # Fetch unique news photograph
     photo = get_unique_slide_image(story, slide_number)
     if photo:
         photo_w, photo_h = photo.size
@@ -185,11 +197,12 @@ def render_slide(story, slide_number, total_slides=5):
     try:
         font_badge = ImageFont.truetype("DejaVuSans-Bold.ttf", 22)
         font_h1 = ImageFont.truetype("DejaVuSans-Bold.ttf", 44)
-        font_card_head = ImageFont.truetype("DejaVuSans-Bold.ttf", 22)
-        font_body = ImageFont.truetype("DejaVuSans.ttf", 23)
+        font_card_head = ImageFont.truetype("DejaVuSans-Bold.ttf", 23)
+        font_body = ImageFont.truetype("DejaVuSans.ttf", 24)
         font_footer = ImageFont.truetype("DejaVuSans-Bold.ttf", 26)
+        font_tick = ImageFont.truetype("DejaVuSans-Bold.ttf", 16)
     except Exception:
-        font_badge = font_h1 = font_card_head = font_body = font_footer = ImageFont.load_default()
+        font_badge = font_h1 = font_card_head = font_body = font_footer = font_tick = ImageFont.load_default()
 
     # Top Header Pill
     draw.rounded_rectangle([(60, 45), (1020, 105)], radius=14, fill=(10, 16, 28), outline=(50, 85, 140), width=2)
@@ -218,18 +231,43 @@ def render_slide(story, slide_number, total_slides=5):
     card_y = max(820, hy + 25)
     card_h = 360
     draw.rounded_rectangle([(60, card_y), (1020, card_y + card_h)], radius=18, fill=(12, 18, 30), outline=(40, 65, 110), width=2)
-    draw.rectangle([(60, card_y), (1020, card_y + 48)], fill=(18, 30, 52))
-    draw.text((85, card_y + 13), f"SOURCE: {story['source'].upper()} • VERIFIED DESK", font=font_card_head, fill=(190, 220, 255))
+    draw.rectangle([(60, card_y), (1020, card_y + 52)], fill=(18, 30, 52))
 
-    cy = card_y + 70
-    bullet_points = [
-        f"• Verified regional report published via {story['source']}.",
-        "• Real-time fact verification and multi-source corroboration.",
-        "• Key development affecting Andhra Pradesh & Telangana citizens."
-    ]
-    for bp in bullet_points:
-        draw.text((85, cy), bp, font=font_body, fill=(220, 235, 250))
-        cy += 50
+    # Header: "DESCRIPTION • THE HINDU" with verified blue tick badge
+    draw.text((85, card_y + 14), "DESCRIPTION", font=font_card_head, fill=(255, 215, 60))
+    draw.text((275, card_y + 14), "•  THE HINDU", font=font_card_head, fill=(200, 225, 255))
+
+    # Verified blue tick mark badge next to The Hindu
+    badge_x = 445
+    badge_y = card_y + 16
+    draw.ellipse([(badge_x, badge_y), (badge_x + 22, badge_y + 22)], fill=(29, 155, 240))
+    draw.text((badge_x + 4, badge_y + 2), "✓", font=font_tick, fill=(255, 255, 255))
+
+    # Important Points / Real News Description inside the box
+    cy = card_y + 75
+    draw.text((85, cy), "Important Points & Core Details:", font=font_card_head, fill=(100, 220, 255))
+    cy += 45
+
+    # Word-wrap the real article description
+    raw_desc = story.get("description", "").strip()
+    if not raw_desc or len(raw_desc) < 25:
+        raw_desc = f"{story['title']}. Official developing report covered by The Hindu bureau across Andhra Pradesh and Telangana."
+
+    desc_words = raw_desc.split()
+    desc_lines = []
+    curr_l = []
+    for w in desc_words:
+        if font_body.getlength(" ".join(curr_l + [w])) <= 880:
+            curr_l.append(w)
+        else:
+            if curr_l: desc_lines.append(" ".join(curr_l))
+            curr_l = [w]
+    if curr_l: desc_lines.append(" ".join(curr_l))
+
+    # Render up to 5 wrapped lines of real news facts
+    for line in desc_lines[:5]:
+        draw.text((85, cy), f"•  {line}", font=font_body, fill=(225, 235, 250))
+        cy += 44
 
     # Bottom Call-to-Action Bar
     draw.rectangle([(0, 1220), (W, H)], fill=(8, 12, 20))
@@ -247,7 +285,7 @@ def render_slide(story, slide_number, total_slides=5):
     return filename
 
 def upload_slide_image(local_filepath):
-    """Uploads image with multi-provider fallbacks to ensure a direct HTTPS image URL."""
+    """Uploads image to a public temporary host returning direct image/jpeg URLs."""
     try:
         with open(local_filepath, "rb") as f:
             r = requests.post("https://uguu.se/upload.php", files={"files[]": f}, timeout=25)
@@ -308,7 +346,6 @@ def publish_instagram_carousel(image_urls, caption):
 
     print(f"Target Instagram Account ID: {IG_USER_ID}")
 
-    # Step 1: Create media item containers for each slide
     item_ids = []
     for i, url in enumerate(image_urls, start=1):
         print(f"Creating container for slide {i}...")
@@ -330,7 +367,6 @@ def publish_instagram_carousel(image_urls, caption):
         wait_for_container(item_id)
         item_ids.append(item_id)
 
-    # Step 2: Create parent carousel container
     print("Creating parent carousel container...")
     carousel_res = requests.post(
         f"https://graph.facebook.com/v21.0/{IG_USER_ID}/media",
@@ -351,7 +387,6 @@ def publish_instagram_carousel(image_urls, caption):
     print(f"Parent Carousel Container created: {creation_id}")
     wait_for_container(creation_id)
 
-    # Step 3: Publish carousel
     print("Publishing carousel to Instagram...")
     pub_res = requests.post(
         f"https://graph.facebook.com/v21.0/{IG_USER_ID}/media_publish",
@@ -379,21 +414,19 @@ def main():
         print(f"Found only {len(stories)} stories. Need 5 for carousel.")
         sys.exit(0)
 
-    # Render all 5 slides as JPEG with distinct background photos
+    # Render all 5 slides with real news descriptions and verified badges
     slide_files = []
-    print("Step 2: Rendering 5 slides with unique news photography...")
+    print("Step 2: Rendering 5 slides with real news content and verified badge...")
     for i, story in enumerate(stories, start=1):
         filename = render_slide(story, slide_number=i, total_slides=5)
         slide_files.append(filename)
 
-    # Upload slides to public direct HTTPS image URLs
     public_urls = []
     print("Step 3: Uploading direct image URLs for Meta...")
     for f in slide_files:
         url = upload_slide_image(f)
         public_urls.append(url)
 
-    # Dynamic numbered headline block
     emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
     headline_lines = []
     for idx, story in enumerate(stories):
@@ -412,11 +445,9 @@ def main():
         f"#TelanganaNews #CurrentAffairs #DailyNews #NewsUpdate"
     )
 
-    # Publish to Instagram
     print("Step 4: Publishing carousel via Meta Graph API...")
     publish_instagram_carousel(public_urls, caption)
 
-    # Update history only after successful publish
     history = load_history()
     for s in stories:
         if s["guid"] not in history:
@@ -426,4 +457,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-                            
