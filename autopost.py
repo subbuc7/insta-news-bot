@@ -101,7 +101,6 @@ def fetch_ai_photo(headline):
     except Exception as e:
         print(f"AI photo generation fallback: {e}")
     
-    # Fallback dark photo background
     bg = Image.new("RGBA", (W, H), (15, 20, 32, 255))
     d = ImageDraw.Draw(bg)
     for y in range(H):
@@ -156,8 +155,7 @@ def render_cover_slide(news_item, output_filename="slide1.jpg"):
     start_y = H - 100 - (len(lines[:3]) * (line_h + 8)) - 60
 
     for i, line in enumerate(lines[:3]):
-        bbox = font_banner.getbbox(line)
-        tw = bbox - bbox[0]
+        tw = int(font_banner.getlength(line))
         x0 = int((W - tw) / 2) - pad_x
         y0 = start_y + i * (line_h + 8)
         x1 = x0 + tw + (pad_x * 2)
@@ -168,8 +166,7 @@ def render_cover_slide(news_item, output_filename="slide1.jpg"):
 
     # Sub-headline / Quote
     sub_quote = f'"{news_item["source"].upper()}" Breaking Report'
-    q_bbox = font_sub.getbbox(sub_quote)
-    qw = q_bbox - q_bbox[0]
+    qw = int(font_sub.getlength(sub_quote))
     qx = int((W - qw) / 2)
     qy = start_y + len(lines[:3]) * (line_h + 8) + 16
     draw.text((qx, qy), sub_quote, font=font_sub, fill=(245, 245, 245))
@@ -233,7 +230,7 @@ def render_content_slide(news_item, output_filename="slide2.jpg"):
             cy += 36
         cy += 20
 
-    # Key Highlights & Timeline
+    # Key Highlights
     draw.text((90, cy), "KEY HIGHLIGHTS & BACKGROUND:", font=font_bold, fill=(255, 205, 60))
     cy += 45
 
@@ -274,7 +271,6 @@ def upload_image_to_imgur(file_path):
     return None
 
 def publish_carousel_to_instagram(image_urls, caption):
-    """Publishes a 2-slide carousel to Instagram"""
     item_ids = []
     for idx, url in enumerate(image_urls):
         print(f"Creating carousel item {idx + 1}...")
@@ -290,7 +286,7 @@ def publish_carousel_to_instagram(image_urls, caption):
             print(f"Item {idx + 1} failed:", res.text)
 
     if len(item_ids) < 2:
-        print("Carousel container requires 2 items. Falling back to single photo post...")
+        print("Falling back to single photo post...")
         single_res = requests.post(f"https://graph.facebook.com/v20.0/{IG_USER_ID}/media", data={
             "image_url": image_urls[0],
             "caption": caption,
@@ -298,7 +294,6 @@ def publish_carousel_to_instagram(image_urls, caption):
         }, timeout=30)
         creation_id = single_res.json().get("id")
     else:
-        # Create Carousel Container
         print("Creating Carousel Container...")
         c_res = requests.post(f"https://graph.facebook.com/v20.0/{IG_USER_ID}/media", data={
             "media_type": "CAROUSEL",
@@ -312,9 +307,7 @@ def publish_carousel_to_instagram(image_urls, caption):
         print("Failed to create container.")
         return False
 
-    print(f"Container created ({creation_id}). Publishing in 6 seconds...")
     time.sleep(6)
-
     pub_res = requests.post(f"https://graph.facebook.com/v20.0/{IG_USER_ID}/media_publish", data={
         "creation_id": creation_id,
         "access_token": IG_ACCESS_TOKEN
@@ -336,11 +329,9 @@ def main():
 
     print(f"Story: {news_item['title']} ({news_item['source']})")
     
-    # 1. Generate Slide 1 (Reference Style Cover) & Slide 2 (Deep-Dive)
     s1_file = render_cover_slide(news_item, "slide1.jpg")
     s2_file = render_content_slide(news_item, "slide2.jpg")
 
-    # 2. Comprehensive 3-Paragraph Caption (Matching reference style)
     caption = (
         f"🚨 TODAY'S BREAKING STORY: {news_item['title']}\n\n"
         f"In a major development reported by {news_item['source']} on {news_item['published_at']}, "
@@ -367,7 +358,7 @@ def main():
             save_history(history)
             print("Finished successfully!")
     else:
-        print("Failed to upload slides to public CDN.")
+        print("Failed to upload slides to CDN.")
 
 if __name__ == "__main__":
     main()
