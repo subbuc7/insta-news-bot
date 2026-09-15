@@ -508,16 +508,14 @@ def main():
         url = upload_slide_image(f)
         uploaded_urls.append(url)
 
+        headline_lines = "\n".join([f"{i}️⃣ {s['title']}" for i, s in enumerate(stories[:5], 1)])
     caption = (
         "🔴 DAILY REGIONAL ROUNDUP | Andhra Pradesh & Telangana\n\n"
-        f"1️⃣ {stories[0]['title']}\n"
-        f"2️⃣ {stories['title']}\n"
-        f"3️⃣ {stories['title']}\n"
-        f"4️⃣ {stories['title']}\n"
-        f"5️⃣ {stories['title']}\n\n"
+        f"{headline_lines}\n\n"
         "Swipe across the carousel to read full verified briefs from The Hindu bureau.\n\n"
         "#AndhraPradesh #Telangana #APNews #TelanganaNews #HyderabadNews #Amaravati #DailyNews"
     )
+    
 
     print("Step 5: Publishing carousel to Instagram...")
     publish_instagram_carousel(uploaded_urls, caption)
