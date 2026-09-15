@@ -7,14 +7,28 @@ from io import BytesIO
 import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
-from PIL import Image, ImageDraw, ImageFont, ImageEnhance
+from PIL import Image, ImageDraw, ImageFont
 
 IG_USER_ID = os.getenv("INSTAGRAM_ACCOUNT_ID", "")
 IG_ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN", "")
 TRIGGER_TYPE = os.getenv("TRIGGER_TYPE", "")
 IST = timezone(timedelta(hours=5, minutes=30))
 HISTORY_FILE = "posted_history.json"
-RSS_URL = "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en"
+
+# Dedicated regional feeds for Andhra Pradesh and Telangana
+FEEDS = [
+    "https://www.thehindu.com/news/national/andhra-pradesh/feeder/default.rss",
+    "https://www.thehindu.com/news/national/telangana/feeder/default.rss"
+]
+
+# Guaranteed unique background photo pool per slide
+UNIQUE_FALLBACK_IMAGES = [
+    "https://images.unsplash.com/photo-1541872703-74c5e44368f9?w=1080&q=80",  # Slide 1: Amaravati / State Governance
+    "https://images.unsplash.com/photo-1605379399642-870262d3d051?w=1080&q=80",  # Slide 2: Hyderabad Skyline / Infrastructure
+    "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?w=1080&q=80",  # Slide 3: Recruitment / Public Administration
+    "https://images.unsplash.com/photo-1609766857041-ed402ea8069a?w=1080&q=80",  # Slide 4: Tirumala / Temple & Heritage
+    "https://images.unsplash.com/photo-1519692933481-e162a57d6721?w=1080&q=80",  # Slide 5: Weather & Regional Transit
+]
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
@@ -30,101 +44,106 @@ def save_history(history):
         json.dump(history[-200:], f, indent=2)
 
 def fetch_top_5_news():
-    headers = {"User-Agent": "Mozilla/5.0"}
-    res = requests.get(RSS_URL, headers=headers, timeout=15)
-    root = ET.fromstring(res.content)
-    items = root.findall(".//item")
-
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     history = load_history()
     selected_stories = []
     fallback_stories = []
 
-    for item in items:
-        title = item.find("title").text if item.find("title") is not None else ""
-        link = item.find("link").text if item.find("link") is not None else ""
-        guid = item.find("guid").text if item.find("guid") is not None else link
-        pub_date_str = item.find("pubDate").text if item.find("pubDate") is not None else ""
+    for feed_url in FEEDS:
+        try:
+            res = requests.get(feed_url, headers=headers, timeout=12)
+            root = ET.fromstring(res.content)
+            items = root.findall(".//item")
 
-        if not title or not pub_date_str:
-            continue
+            for item in items:
+                title = item.find("title").text if item.find("title") is not None else ""
+                link = item.find("link").text if item.find("link") is not None else ""
+                guid = item.find("guid").text if item.find("guid") is not None else link
 
-        clean_title = title.split(" - ")[0].strip()
-        source = title.split(" - ")[-1].strip() if " - " in title else "Verified Desk"
+                if not title or not link:
+                    continue
 
-        story = {
-            "guid": guid,
-            "title": clean_title,
-            "source": source,
-            "link": link
-        }
+                # Check if image is directly embedded in RSS tag
+                direct_img = ""
+                for elem in item.iter():
+                    if elem.tag.endswith("content") and "url" in elem.attrib:
+                        direct_img = elem.attrib["url"]
+                        break
+                    if elem.tag == "enclosure" and "url" in elem.attrib:
+                        direct_img = elem.attrib["url"]
+                        break
 
-        if len(fallback_stories) < 5:
-            fallback_stories.append(story)
+                clean_title = title.split(" - ")[0].strip()
+                source = "The Hindu"
 
-        if guid not in history:
-            selected_stories.append(story)
+                story = {
+                    "guid": guid,
+                    "title": clean_title,
+                    "source": source,
+                    "link": link,
+                    "rss_img": direct_img
+                }
 
-        if len(selected_stories) == 5:
-            break
+                if len(fallback_stories) < 5:
+                    fallback_stories.append(story)
 
-    # If manually clicked, guarantee 5 stories to avoid skipping
+                if guid not in history:
+                    selected_stories.append(story)
+
+                if len(selected_stories) == 5:
+                    return selected_stories
+        except Exception as e:
+            print(f"Error reading feed {feed_url}: {e}")
+
+    # If triggered manually, guarantee 5 stories
     if TRIGGER_TYPE == "workflow_dispatch" and len(selected_stories) < 5:
-        print("Manual trigger detected: using latest available feed stories.")
+        print("Manual trigger detected: utilizing latest available stories.")
         return fallback_stories
 
     return selected_stories
 
-def get_news_image(link, title):
-    """Extracts the news article's image or falls back to topic-specific photography."""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+def get_unique_slide_image(story, slide_number):
+    """Fetches a unique news photo for this story or assigns a dedicated per-slide fallback."""
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-    # 1. Try extracting og:image from the article URL
+    # 1. Direct image from RSS if available
+    if story.get("rss_img") and story["rss_img"].startswith("http"):
+        try:
+            r = requests.get(story["rss_img"], headers=headers, timeout=8)
+            if r.status_code == 200 and len(r.content) > 5000:
+                print(f"Slide {slide_number}: Loaded photo directly from RSS.")
+                return Image.open(BytesIO(r.content)).convert("RGB")
+        except Exception:
+            pass
+
+    # 2. Extract og:image from the publisher's article page
     try:
-        if link:
-            res = requests.get(link, headers=headers, timeout=6, allow_redirects=True)
+        if story.get("link"):
+            res = requests.get(story["link"], headers=headers, timeout=6)
             if res.status_code == 200:
                 html = res.text
                 m = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', html, re.IGNORECASE)
                 if not m:
                     m = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', html, re.IGNORECASE)
+
                 if m:
                     img_url = m.group(1).strip()
-                    if img_url.startswith("http") and not img_url.endswith(".svg"):
-                        img_res = requests.get(img_url, headers=headers, timeout=8)
-                        if img_res.status_code == 200 and len(img_res.content) > 5000:
-                            return Image.open(BytesIO(img_res.content)).convert("RGB")
+                    blocked = ["googleusercontent.com", "google.com", "gstatic.com", "favicon", "logo"]
+                    if img_url.startswith("http") and not any(b in img_url.lower() for b in blocked):
+                        r = requests.get(img_url, headers=headers, timeout=8)
+                        if r.status_code == 200 and len(r.content) > 5000:
+                            print(f"Slide {slide_number}: Extracted publisher photo.")
+                            return Image.open(BytesIO(r.content)).convert("RGB")
     except Exception as e:
-        print(f"Could not extract article image: {e}")
+        print(f"Slide {slide_number}: og:image error: {e}")
 
-    # 2. Topic-based fallback images
-    t_lower = title.lower()
-    topic_map = {
-        "police": "https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=1080&q=80",
-        "court": "https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=1080&q=80",
-        "accident": "https://images.unsplash.com/photo-1558981806-ec527fa84c39?w=1080&q=80",
-        "biker": "https://images.unsplash.com/photo-1558981806-ec527fa84c39?w=1080&q=80",
-        "rain": "https://images.unsplash.com/photo-1519692933481-e162a57d6721?w=1080&q=80",
-        "weather": "https://images.unsplash.com/photo-1519692933481-e162a57d6721?w=1080&q=80",
-        "train": "https://images.unsplash.com/photo-1474487548417-781cb71495f3?w=1080&q=80",
-        "temple": "https://images.unsplash.com/photo-1609766857041-ed402ea8069a?w=1080&q=80",
-        "tirupati": "https://images.unsplash.com/photo-1609766857041-ed402ea8069a?w=1080&q=80",
-        "job": "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?w=1080&q=80",
-        "exam": "https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=1080&q=80",
-        "tech": "https://images.unsplash.com/photo-1518770660439-4636190af475?w=1080&q=80"
-    }
-
-    fallback_url = "https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=1080&q=80"
-    for kw, f_url in topic_map.items():
-        if kw in t_lower:
-            fallback_url = f_url
-            break
-
+    # 3. Guaranteed unique fallback for each slide position (1 to 5)
+    fallback_url = UNIQUE_FALLBACK_IMAGES[(slide_number - 1) % len(UNIQUE_FALLBACK_IMAGES)]
     try:
-        f_res = requests.get(fallback_url, headers=headers, timeout=8)
-        if f_res.status_code == 200:
-            return Image.open(BytesIO(f_res.content)).convert("RGB")
+        print(f"Slide {slide_number}: Using unique slide theme photo.")
+        r = requests.get(fallback_url, headers=headers, timeout=8)
+        if r.status_code == 200:
+            return Image.open(BytesIO(r.content)).convert("RGB")
     except Exception:
         pass
 
@@ -134,37 +153,30 @@ def render_slide(story, slide_number, total_slides=5):
     W, H = 1080, 1350
     canvas = Image.new("RGB", (W, H), (6, 10, 16))
 
-    # Fetch news image
-    photo = get_news_image(story["link"], story["title"])
+    # Fetch dedicated unique image for this slide
+    photo = get_unique_slide_image(story, slide_number)
     if photo:
-        # Resize photo to cover upper 65% of canvas
         photo_w, photo_h = photo.size
         target_w, target_h = W, 720
         ratio = max(target_w / photo_w, target_h / photo_h)
         new_size = (int(photo_w * ratio), int(photo_h * ratio))
         photo_resized = photo.resize(new_size, Image.Resampling.LANCZOS)
-        
-        # Center crop
         left = (photo_resized.width - target_w) // 2
         top = (photo_resized.height - target_h) // 2
         photo_cropped = photo_resized.crop((left, top, left + target_w, top + target_h))
-        
-        # Paste into canvas top
         canvas.paste(photo_cropped, (0, 0))
 
-    # Gradient fade overlay for legibility
+    # Gradient overlays
     gradient = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     g_draw = ImageDraw.Draw(gradient)
 
-    # Top fade behind header
     for y in range(160):
-        alpha = int(180 * (1 - (y / 160)))
+        alpha = int(190 * (1 - (y / 160)))
         g_draw.line([(0, y), (W, y)], fill=(4, 6, 10, alpha))
 
-    # Bottom fade behind text card
-    for y in range(400, H):
-        factor = min(1.0, (y - 400) / 280)
-        alpha = int(factor * 248)
+    for y in range(380, H):
+        factor = min(1.0, (y - 380) / 280)
+        alpha = int(factor * 252)
         g_draw.line([(0, y), (W, y)], fill=(6, 10, 18, alpha))
 
     canvas = Image.alpha_composite(canvas.convert("RGBA"), gradient).convert("RGB")
@@ -181,9 +193,9 @@ def render_slide(story, slide_number, total_slides=5):
 
     # Top Header Pill
     draw.rounded_rectangle([(60, 45), (1020, 105)], radius=14, fill=(10, 16, 28), outline=(50, 85, 140), width=2)
-    badge_label = "🔴 TOP PRIORITY STORY" if slide_number == 1 else f"REGIONAL UPDATE ({slide_number}/{total_slides})"
-    draw.text((90, 65), badge_label, font=font_badge, fill=(255, 215, 60))
-    draw.text((840, 65), f"SLIDE {slide_number} OF {total_slides}", font=font_badge, fill=(180, 210, 255))
+    badge_label = "🔴 TOP PRIORITY STORY" if slide_number == 1 else f"AP & TS UPDATE ({slide_number}/{total_slides})"
+    draw.text((85, 65), badge_label, font=font_badge, fill=(255, 215, 60))
+    draw.text((860, 65), f"SLIDE {slide_number}/{total_slides}", font=font_badge, fill=(180, 210, 255))
 
     # Headline
     words = story["title"].split()
@@ -211,9 +223,9 @@ def render_slide(story, slide_number, total_slides=5):
 
     cy = card_y + 70
     bullet_points = [
-        f"• Verified reporting broadcast by {story['source']}.",
-        "• Real-time fact verification and cross-source corroborated.",
-        "• Active developing story affecting regional citizens and administration."
+        f"• Verified regional report published via {story['source']}.",
+        "• Real-time fact verification and multi-source corroboration.",
+        "• Key development affecting Andhra Pradesh & Telangana citizens."
     ]
     for bp in bullet_points:
         draw.text((85, cy), bp, font=font_body, fill=(220, 235, 250))
@@ -235,8 +247,7 @@ def render_slide(story, slide_number, total_slides=5):
     return filename
 
 def upload_slide_image(local_filepath):
-    """Uploads image to a public temporary host returning direct image/jpeg URLs."""
-    # 1. Try Uguu.se
+    """Uploads image with multi-provider fallbacks to ensure a direct HTTPS image URL."""
     try:
         with open(local_filepath, "rb") as f:
             r = requests.post("https://uguu.se/upload.php", files={"files[]": f}, timeout=25)
@@ -249,7 +260,6 @@ def upload_slide_image(local_filepath):
     except Exception as e:
         print(f"Uguu upload notice: {e}")
 
-    # 2. Try Catbox
     try:
         with open(local_filepath, "rb") as f:
             r = requests.post("https://catbox.moe/user/api.php", data={"reqtype": "fileupload"}, files={"fileToUpload": f}, timeout=25)
@@ -260,7 +270,6 @@ def upload_slide_image(local_filepath):
     except Exception as e:
         print(f"Catbox upload notice: {e}")
 
-    # 3. Try tmpfiles.org
     try:
         with open(local_filepath, "rb") as f:
             r = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f}, timeout=25)
@@ -363,16 +372,16 @@ def publish_instagram_carousel(image_urls, caption):
         sys.exit(1)
 
 def main():
-    print("Step 1: Fetching top 5 distinct regional stories...")
+    print("Step 1: Fetching top 5 Andhra Pradesh & Telangana stories...")
     stories = fetch_top_5_news()
 
     if len(stories) < 5:
         print(f"Found only {len(stories)} stories. Need 5 for carousel.")
         sys.exit(0)
 
-    # Render all 5 slides as JPEG with background photos
+    # Render all 5 slides as JPEG with distinct background photos
     slide_files = []
-    print("Step 2: Rendering 5 slides with background news photography...")
+    print("Step 2: Rendering 5 slides with unique news photography...")
     for i, story in enumerate(stories, start=1):
         filename = render_slide(story, slide_number=i, total_slides=5)
         slide_files.append(filename)
@@ -384,7 +393,7 @@ def main():
         url = upload_slide_image(f)
         public_urls.append(url)
 
-    # Dynamic headline lines to prevent formatting issues
+    # Dynamic numbered headline block
     emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
     headline_lines = []
     for idx, story in enumerate(stories):
@@ -393,10 +402,10 @@ def main():
     headlines_formatted = "\n".join(headline_lines)
 
     caption = (
-        f"🚨 TOP 5 BREAKING HEADLINES TODAY\n\n"
+        f"🚨 TOP 5 AP & TELANGANA BREAKING HEADLINES\n\n"
         f"{headlines_formatted}\n\n"
-        f"👉 Swipe through the carousel to read full breakdowns of each story!\n\n"
-        f"💬 Which headline matters most to you? Drop your comment below.\n\n"
+        f"👉 Swipe through the carousel for complete details on each story!\n\n"
+        f"💬 Which update impacts you the most? Share your thoughts below.\n\n"
         f"•\n•\n•\n"
         f"#Trending #ExplorePage #ViralPost #BreakingNews #InstaNews "
         f"#AndhraPradesh #Telangana #Hyderabad #Amaravati #APNews "
@@ -417,4 +426,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
+                            
