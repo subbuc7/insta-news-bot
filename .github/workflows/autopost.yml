@@ -1,10 +1,12 @@
 name: Auto Post 5-Slide News Carousel to Instagram
 
 on:
+  # 1. Runs automatically every hour
   schedule:
-    # Runs automatically every hour (GitHub Actions cron limit)
     - cron: '0 * * * *'
-  workflow_dispatch: # Allows manual run backup if ever needed
+
+  # 2. Runs immediately whenever you click "Run workflow" in GitHub
+  workflow_dispatch:
 
 jobs:
   run-carousel-bot:
@@ -13,7 +15,7 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -29,10 +31,12 @@ jobs:
         env:
           INSTAGRAM_ACCOUNT_ID: ${{ secrets.INSTAGRAM_ACCOUNT_ID }}
           INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+          TRIGGER_TYPE: ${{ github.event_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           python autopost.py
 
-      - name: Commit Deduplication History
+      - name: Save History
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
