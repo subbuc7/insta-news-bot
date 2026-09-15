@@ -74,6 +74,7 @@ def fetch_top_5_news():
 
 def render_slide(story, slide_number, total_slides=5):
     W, H = 1080, 1350
+    # RGB format required for JPEG
     img = Image.new("RGB", (W, H), (4, 6, 10))
     draw = ImageDraw.Draw(img)
 
@@ -143,31 +144,67 @@ def render_slide(story, slide_number, total_slides=5):
     draw.line([(0, 1220), (W, 1220)], fill=(45, 75, 130), width=2)
 
     if slide_number == 1:
-        # Prompt on slide 1
         draw.text((W // 2 - 210, 1265), "👉 SWIPE TO READ NEXT ➔", font=font_footer, fill=(255, 215, 60))
     elif slide_number < total_slides:
         draw.text((W // 2 - 210, 1265), "👉 SWIPE TO READ NEXT ➔", font=font_footer, fill=(100, 220, 255))
     else:
         draw.text((W // 2 - 230, 1265), "💬 SHARE YOUR THOUGHTS ➔", font=font_footer, fill=(56, 239, 125))
 
-    filename = f"slide_{slide_number}.png"
-    img.save(filename, "PNG", quality=95)
+    # CRITICAL: Meta Instagram Graph API requires JPEG format (.jpg)
+    filename = f"slide_{slide_number}.jpg"
+    img.save(filename, "JPEG", quality=92, optimize=True)
     return filename
 
 def upload_slide_image(local_filepath):
-    """Uploads the local slide to a temporary public host so Meta Graph API can access it."""
+    """Uploads the local JPEG to a clean public host that returns direct image/jpeg Content-Type."""
+    # Using Catbox Litterbox for direct clean HTTPS image URLs
+    try:
+        with open(local_filepath, "rb") as f:
+            res = requests.post(
+                "https://litterbox.catbox.moe/resources/internals/api.php",
+                data={"reqtype": "fileupload", "time": "1h"},
+                files={"fileToUpload": f},
+                timeout=40
+            )
+        if res.status_code == 200 and res.text.startswith("http"):
+            direct_url = res.text.strip()
+            print(f"Uploaded {local_filepath} -> {direct_url}")
+            return direct_url
+    except Exception as e:
+        print(f"Litterbox upload error: {e}")
+
+    # Fallback to Freeimage
     with open(local_filepath, "rb") as f:
-        res = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f}, timeout=30)
-    data = res.json()
-    raw_url = data["data"]["url"]
-    direct_url = raw_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
-    return direct_url
+        res = requests.post(
+            "https://freeimage.host/api/1/upload",
+            data={"key": "6d207e02198a847aa98d0a2a901485a5", "action": "upload", "format": "json"},
+            files={"source": f},
+            timeout=40
+        )
+    return res.json()["image"]["url"]
+
+def wait_for_container(container_id, max_attempts=12):
+    """Polls Meta Graph API until the media container status is FINISHED."""
+    for attempt in range(max_attempts):
+        url = f"https://graph.facebook.com/v21.0/{container_id}?fields=status_code,status&access_token={IG_ACCESS_TOKEN}"
+        r = requests.get(url).json()
+        status = r.get("status_code")
+        print(f"Container {container_id} status: {status}")
+        if status == "FINISHED":
+            return True
+        elif status == "ERROR":
+            print(f"Container {container_id} failed with error:", r)
+            return False
+        time.sleep(4)
+    return True
 
 def publish_instagram_carousel(image_urls, caption):
-    """Publishes a 5-slide carousel using the Meta Graph API."""
+    """Publishes a 5-slide carousel using the Meta Graph API with complete status verification."""
     if not IG_USER_ID or not IG_ACCESS_TOKEN:
-        print("Meta API credentials missing. Skipping publishing step.")
-        return False
+        print("ERROR: INSTAGRAM_ACCOUNT_ID or INSTAGRAM_ACCESS_TOKEN is missing!")
+        sys.exit(1)
+
+    print(f"Using Instagram Account ID: {IG_USER_ID}")
 
     # Step 1: Create media item containers for each slide
     item_ids = []
@@ -182,11 +219,14 @@ def publish_instagram_carousel(image_urls, caption):
             },
             timeout=30
         ).json()
-        if "id" in res:
-            item_ids.append(res["id"])
-        else:
-            print("Error creating slide container:", res)
-            return False
+
+        if "id" not in res:
+            print("Meta API Error creating slide container:", json.dumps(res, indent=2))
+            sys.exit(1)
+
+        item_id = res["id"]
+        wait_for_container(item_id)
+        item_ids.append(item_id)
 
     # Step 2: Create parent carousel container
     print("Creating parent carousel container...")
@@ -202,12 +242,12 @@ def publish_instagram_carousel(image_urls, caption):
     ).json()
 
     if "id" not in carousel_res:
-        print("Error creating carousel parent container:", carousel_res)
-        return False
+        print("Meta API Error creating carousel container:", json.dumps(carousel_res, indent=2))
+        sys.exit(1)
 
     creation_id = carousel_res["id"]
-    print("Waiting for Meta media processing...")
-    time.sleep(8)
+    print(f"Parent Carousel Container created: {creation_id}")
+    wait_for_container(creation_id)
 
     # Step 3: Publish carousel
     print("Publishing carousel to Instagram...")
@@ -220,27 +260,33 @@ def publish_instagram_carousel(image_urls, caption):
         timeout=30
     ).json()
 
-    print("Publishing result:", pub_res)
-    return "id" in pub_res
+    print("Publish Response:", json.dumps(pub_res, indent=2))
+
+    if "id" in pub_res:
+        print(f"SUCCESS: Post published with ID {pub_res['id']}")
+        return True
+    else:
+        print("Meta Publishing Error:", json.dumps(pub_res, indent=2))
+        sys.exit(1)
 
 def main():
-    print("Fetching top 5 distinct regional news stories...")
+    print("Step 1: Fetching top 5 distinct regional stories...")
     stories = fetch_top_5_news()
 
     if len(stories) < 5:
-        print(f"Found only {len(stories)} stories. Need 5 for carousel. Exiting.")
+        print(f"Found only {len(stories)} stories. Need 5 for carousel.")
         sys.exit(0)
 
-    # Render all 5 slides
+    # Render all 5 slides as JPEG
     slide_files = []
-    print("Rendering 5 slides in 4:5 portrait format...")
+    print("Step 2: Rendering 5 slides in 4:5 JPEG format...")
     for i, story in enumerate(stories, start=1):
         filename = render_slide(story, slide_number=i, total_slides=5)
         slide_files.append(filename)
 
-    # Upload slides to public HTTPS URLs for Meta
+    # Upload slides to public direct HTTPS image URLs
     public_urls = []
-    print("Uploading slide images for Meta Graph API...")
+    print("Step 3: Uploading direct image URLs for Meta...")
     for f in slide_files:
         url = upload_slide_image(f)
         public_urls.append(url)
@@ -257,15 +303,16 @@ def main():
     )
 
     # Publish to Instagram
-    published = publish_instagram_carousel(public_urls, caption)
+    print("Step 4: Publishing carousel via Meta Graph API...")
+    publish_instagram_carousel(public_urls, caption)
 
-    # Update history
+    # Update history only after successful publish
     history = load_history()
     for s in stories:
         if s["guid"] not in history:
             history.append(s["guid"])
     save_history(history)
-    print("Workflow execution completed successfully.")
+    print("Workflow completed successfully.")
 
 if __name__ == "__main__":
     main()
