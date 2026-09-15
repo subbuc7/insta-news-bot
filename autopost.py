@@ -65,7 +65,7 @@ def fetch_top_5_news():
         if len(selected_stories) == 5:
             break
 
-    # If triggered manually, ensure 5 stories are always returned to avoid skipping
+    # If triggered manually, guarantee 5 stories are returned
     if TRIGGER_TYPE == "workflow_dispatch" and len(selected_stories) < 5:
         print("Manual click detected: utilizing latest available feed stories.")
         return fallback_stories
@@ -74,11 +74,10 @@ def fetch_top_5_news():
 
 def render_slide(story, slide_number, total_slides=5):
     W, H = 1080, 1350
-    # RGB format required for JPEG
     img = Image.new("RGB", (W, H), (4, 6, 10))
     draw = ImageDraw.Draw(img)
 
-    # Dark background gradient
+    # Dark luxury gradient
     for y in range(H):
         r = int(4 + (y / H) * 8)
         g = int(6 + (y / H) * 12)
@@ -150,40 +149,70 @@ def render_slide(story, slide_number, total_slides=5):
     else:
         draw.text((W // 2 - 230, 1265), "💬 SHARE YOUR THOUGHTS ➔", font=font_footer, fill=(56, 239, 125))
 
-    # CRITICAL: Meta Instagram Graph API requires JPEG format (.jpg)
+    # Meta requires JPEG format
     filename = f"slide_{slide_number}.jpg"
     img.save(filename, "JPEG", quality=92, optimize=True)
     return filename
 
 def upload_slide_image(local_filepath):
-    """Uploads the local JPEG to a clean public host that returns direct image/jpeg Content-Type."""
-    # Using Catbox Litterbox for direct clean HTTPS image URLs
+    """Uploads image with multi-provider fallbacks to ensure a direct HTTPS image URL."""
+    # 1. Try Uguu.se (reliable temporary host, direct image/jpeg link)
     try:
         with open(local_filepath, "rb") as f:
-            res = requests.post(
-                "https://litterbox.catbox.moe/resources/internals/api.php",
-                data={"reqtype": "fileupload", "time": "1h"},
-                files={"fileToUpload": f},
-                timeout=40
-            )
-        if res.status_code == 200 and res.text.startswith("http"):
-            direct_url = res.text.strip()
-            print(f"Uploaded {local_filepath} -> {direct_url}")
-            return direct_url
+            r = requests.post("https://uguu.se/upload.php", files={"files[]": f}, timeout=25)
+        if r.status_code == 200:
+            res_data = r.json()
+            if res_data.get("success") and res_data.get("files"):
+                url = res_data["files"][0]["url"]
+                print(f"Uploaded {local_filepath} -> {url}")
+                return url
     except Exception as e:
-        print(f"Litterbox upload error: {e}")
+        print(f"Uguu upload notice: {e}")
 
-    # Fallback to Freeimage
-    with open(local_filepath, "rb") as f:
-        res = requests.post(
-            "https://freeimage.host/api/1/upload",
-            data={"key": "6d207e02198a847aa98d0a2a901485a5", "action": "upload", "format": "json"},
-            files={"source": f},
-            timeout=40
-        )
-    return res.json()["image"]["url"]
+    # 2. Try Catbox
+    try:
+        with open(local_filepath, "rb") as f:
+            r = requests.post(
+                "https://catbox.moe/user/api.php",
+                data={"reqtype": "fileupload"},
+                files={"fileToUpload": f},
+                timeout=25
+            )
+        if r.status_code == 200 and r.text.strip().startswith("http"):
+            url = r.text.strip()
+            print(f"Uploaded {local_filepath} -> {url}")
+            return url
+    except Exception as e:
+        print(f"Catbox upload notice: {e}")
 
-def wait_for_container(container_id, max_attempts=12):
+    # 3. Try tmpfiles.org
+    try:
+        with open(local_filepath, "rb") as f:
+            r = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f}, timeout=25)
+        if r.status_code == 200:
+            res_data = r.json()
+            if "data" in res_data and "url" in res_data["data"]:
+                url = res_data["data"]["url"].replace("tmpfiles.org/", "tmpfiles.org/dl/")
+                print(f"Uploaded {local_filepath} -> {url}")
+                return url
+    except Exception as e:
+        print(f"Tmpfiles upload notice: {e}")
+
+    # 4. Try 0x0.st
+    try:
+        with open(local_filepath, "rb") as f:
+            r = requests.post("https://0x0.st", files={"file": f}, timeout=25)
+        if r.status_code == 200 and r.text.strip().startswith("http"):
+            url = r.text.strip()
+            print(f"Uploaded {local_filepath} -> {url}")
+            return url
+    except Exception as e:
+        print(f"0x0.st upload notice: {e}")
+
+    print(f"ERROR: Could not upload {local_filepath} to any host.")
+    sys.exit(1)
+
+def wait_for_container(container_id, max_attempts=15):
     """Polls Meta Graph API until the media container status is FINISHED."""
     for attempt in range(max_attempts):
         url = f"https://graph.facebook.com/v21.0/{container_id}?fields=status_code,status&access_token={IG_ACCESS_TOKEN}"
@@ -193,18 +222,18 @@ def wait_for_container(container_id, max_attempts=12):
         if status == "FINISHED":
             return True
         elif status == "ERROR":
-            print(f"Container {container_id} failed with error:", r)
-            return False
+            print(f"Container {container_id} failed with error:", json.dumps(r, indent=2))
+            sys.exit(1)
         time.sleep(4)
     return True
 
 def publish_instagram_carousel(image_urls, caption):
-    """Publishes a 5-slide carousel using the Meta Graph API with complete status verification."""
+    """Publishes a 5-slide carousel using the Meta Graph API."""
     if not IG_USER_ID or not IG_ACCESS_TOKEN:
         print("ERROR: INSTAGRAM_ACCOUNT_ID or INSTAGRAM_ACCESS_TOKEN is missing!")
         sys.exit(1)
 
-    print(f"Using Instagram Account ID: {IG_USER_ID}")
+    print(f"Target Instagram Account ID: {IG_USER_ID}")
 
     # Step 1: Create media item containers for each slide
     item_ids = []
@@ -294,26 +323,10 @@ def main():
     caption = (
         f"📰 TOP 5 REGIONAL HEADLINES TODAY\n\n"
         f"1️⃣ {stories[0]['title']}\n"
-        f"2️⃣ {stories[1]['title']}\n"
+        f"2️⃣ {stories['title']}\n"
         f"3️⃣ {stories[2]['title']}\n"
         f"4️⃣ {stories[3]['title']}\n"
         f"5️⃣ {stories[4]['title']}\n\n"
         f"👉 Swipe through the carousel for complete details on each story!\n\n"
-        f"#BreakingNews #RegionalNews #APNews #TelanganaNews #DailyBulletin"
-    )
-
-    # Publish to Instagram
-    print("Step 4: Publishing carousel via Meta Graph API...")
-    publish_instagram_carousel(public_urls, caption)
-
-    # Update history only after successful publish
-    history = load_history()
-    for s in stories:
-        if s["guid"] not in history:
-            history.append(s["guid"])
-    save_history(history)
-    print("Workflow completed successfully.")
-
-if __name__ == "__main__":
-    main()
+        f"#BreakingNews #RegionalNews #APNews #TelanganaNews #
     
