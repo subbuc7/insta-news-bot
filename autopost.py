@@ -65,7 +65,7 @@ def fetch_top_5_news():
         if len(selected_stories) == 5:
             break
 
-    # If triggered manually, guarantee 5 stories are always returned
+    # If triggered manually, guarantee 5 stories are returned
     if TRIGGER_TYPE == "workflow_dispatch" and len(selected_stories) < 5:
         print("Manual click detected: utilizing latest available feed stories.")
         return fallback_stories
@@ -77,7 +77,7 @@ def render_slide(story, slide_number, total_slides=5):
     img = Image.new("RGB", (W, H), (4, 6, 10))
     draw = ImageDraw.Draw(img)
 
-    # Dark gradient background
+    # Dark background gradient
     for y in range(H):
         r = int(4 + (y / H) * 8)
         g = int(6 + (y / H) * 12)
@@ -149,7 +149,6 @@ def render_slide(story, slide_number, total_slides=5):
     else:
         draw.text((W // 2 - 230, 1265), "💬 SHARE YOUR THOUGHTS ➔", font=font_footer, fill=(56, 239, 125))
 
-    # Save as JPEG for Meta API
     filename = f"slide_{slide_number}.jpg"
     img.save(filename, "JPEG", quality=92, optimize=True)
     return filename
@@ -320,12 +319,12 @@ def main():
         url = upload_slide_image(f)
         public_urls.append(url)
 
-    # Ready-to-publish caption with viral and regional hashtags
+    # Caption with correct indexing and viral hashtags
     caption = (
         f"🚨 TOP 5 BREAKING HEADLINES TODAY\n\n"
         f"1️⃣ {stories[0]['title']}\n"
         f"2️⃣ {stories['title']}\n"
-        f"3️⃣ {stories[2]['title']}\n"
+        f"3️⃣ {stories['title']}\n"
         f"4️⃣ {stories[3]['title']}\n"
         f"5️⃣ {stories[4]['title']}\n\n"
         f"👉 Swipe through the carousel to read full breakdowns of each story!\n\n"
