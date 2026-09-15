@@ -3,7 +3,7 @@ name: Auto Post Today's News to Instagram
 on:
   schedule:
     # Runs every 30 minutes in the cloud 24/7
-    - cron: '*/30 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch: # Gives you a manual "Run workflow" button
 
 jobs:
