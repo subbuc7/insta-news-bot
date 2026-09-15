@@ -2,22 +2,16 @@ import os
 import sys
 import json
 import time
-import io
-import textwrap
-import urllib.parse
 import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 from PIL import Image, ImageDraw, ImageFont
 
-IG_USER_ID = os.getenv("INSTAGRAM_ACCOUNT_ID", "").strip()
-IG_ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN", "").strip()
-
+IG_USER_ID = os.getenv("INSTAGRAM_ACCOUNT_ID", "")
+IG_ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN", "")
 IST = timezone(timedelta(hours=5, minutes=30))
 HISTORY_FILE = "posted_history.json"
 RSS_URL = "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en"
-
-W, H = 1080, 1350
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
@@ -30,366 +24,204 @@ def load_history():
 
 def save_history(history):
     with open(HISTORY_FILE, "w") as f:
-        json.dump(history[-100:], f, indent=2)
+        json.dump(history[-200:], f, indent=2)
 
-def fetch_latest_today_news():
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+def fetch_top_5_news():
+    headers = {"User-Agent": "Mozilla/5.0"}
     res = requests.get(RSS_URL, headers=headers, timeout=15)
     root = ET.fromstring(res.content)
     items = root.findall(".//item")
 
     now_ist = datetime.now(IST)
-    today_date_str = now_ist.strftime("%Y-%m-%d")
     history = load_history()
+    selected_stories = []
 
-    print(f"Checking {len(items)} RSS feed items for date: {today_date_str}")
-
-    # 1. First priority: New unposted story published TODAY
     for item in items:
         title = item.find("title").text if item.find("title") is not None else ""
         link = item.find("link").text if item.find("link") is not None else ""
         guid = item.find("guid").text if item.find("guid") is not None else link
         pub_date_str = item.find("pubDate").text if item.find("pubDate") is not None else ""
 
-        if not title or not pub_date_str:
-            continue
-
-        try:
-            pub_dt = datetime.strptime(pub_date_str, "%a, %d %b %Y %H:%M:%S %Z").replace(tzinfo=timezone.utc)
-        except Exception:
-            try:
-                pub_dt = datetime.strptime(pub_date_str[:25], "%a, %d %b %Y %H:%M:%S").replace(tzinfo=timezone.utc)
-            except Exception:
-                continue
-
-        pub_ist = pub_dt.astimezone(IST)
-
-        if pub_ist.strftime("%Y-%m-%d") != today_date_str:
-            continue
-
-        if guid in history:
+        if not title or not pub_date_str or guid in history:
             continue
 
         clean_title = title.split(" - ")[0].strip()
         source = title.split(" - ")[-1].strip() if " - " in title else "Verified Desk"
 
-        return {
+        selected_stories.append({
             "guid": guid,
             "title": clean_title,
             "source": source,
-            "published_at": pub_ist.strftime("%d %b %Y, %I:%M %p IST")
-        }
+            "link": link
+        })
 
-    # 2. If all today's items are in history, pick latest unposted item from feed
-    for item in items:
-        title = item.find("title").text if item.find("title") is not None else ""
-        guid = item.find("guid").text if item.find("guid") is not None else ""
-        if guid and guid not in history:
-            clean_title = title.split(" - ")[0].strip()
-            source = title.split(" - ")[-1].strip() if " - " in title else "Verified Desk"
-            return {
-                "guid": guid,
-                "title": clean_title,
-                "source": source,
-                "published_at": now_ist.strftime("%d %b %Y, %I:%M %p IST")
-            }
+        if len(selected_stories) == 5:
+            break
 
-    return None
+    return selected_stories
 
-def fetch_ai_photo(headline):
-    clean_query = headline[:70].replace("'", "").replace('"', "")
-    prompt = f"dramatic press photo of {clean_query}, photojournalism, realistic news photography, 4k"
-    url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(prompt)}?width=1080&height=1350&nologo=true"
-    
-    print(f"Generating AI photo for: {clean_query}...")
-    try:
-        resp = requests.get(url, timeout=35)
-        if resp.status_code == 200:
-            bg = Image.open(io.BytesIO(resp.content)).convert("RGBA")
-            if bg.size != (W, H):
-                bg = bg.resize((W, H), Image.Resampling.LANCZOS)
-            return bg
-    except Exception as e:
-        print(f"AI photo fallback: {e}")
-    
-    bg = Image.new("RGBA", (W, H), (15, 20, 32, 255))
-    d = ImageDraw.Draw(bg)
+def render_slide(story, slide_number, total_slides=5):
+    W, H = 1080, 1350
+    img = Image.new("RGB", (W, H), (4, 6, 10))
+    draw = ImageDraw.Draw(img)
+
+    # Dark luxury background gradient
     for y in range(H):
-        r = int(18 + (y / H) * 16)
-        g = int(22 + (y / H) * 16)
-        b = int(32 + (y / H) * 24)
-        d.line([(0, y), (W, y)], fill=(r, g, b, 255))
-    return bg
-
-# ==========================================
-# SLIDE 1: EXACT REFERENCE STYLE COVER
-# ==========================================
-def render_cover_slide(news_item, output_filename="slide1.jpg"):
-    img = fetch_ai_photo(news_item["title"])
-    
-    vignette = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    d_vig = ImageDraw.Draw(vignette)
-    for y in range(750, H):
-        alpha = int(240 * min(1.0, ((y - 750) / 450) ** 1.3))
-        d_vig.line([(0, y), (W, y)], fill=(0, 0, 0, alpha))
-    img = Image.alpha_composite(img, vignette)
-    draw = ImageDraw.Draw(img)
+        r = int(4 + (y / H) * 8)
+        g = int(6 + (y / H) * 12)
+        b = int(10 + (y / H) * 20)
+        draw.line([(0, y), (W, y)], fill=(r, g, b))
 
     try:
-        font_banner = ImageFont.truetype("DejaVuSans-Bold.ttf", 46)
-        font_sub = ImageFont.truetype("DejaVuSans-Bold.ttf", 30)
-        font_watermark = ImageFont.truetype("DejaVuSans-Bold.ttf", 22)
+        font_badge = ImageFont.truetype("DejaVuSans-Bold.ttf", 22)
+        font_h1 = ImageFont.truetype("DejaVuSans-Bold.ttf", 46)
+        font_card_head = ImageFont.truetype("DejaVuSans-Bold.ttf", 24)
+        font_body = ImageFont.truetype("DejaVuSans.ttf", 24)
+        font_footer = ImageFont.truetype("DejaVuSans-Bold.ttf", 26)
     except Exception:
-        font_banner = font_sub = font_watermark = ImageFont.load_default()
+        font_badge = font_h1 = font_card_head = font_body = font_footer = ImageFont.load_default()
 
-    # Brand Handle Top Pill
-    draw.rounded_rectangle([(60, 45), (310, 95)], radius=10, fill=(0, 0, 0, 200))
-    draw.text((75, 58), "@_AP_TS_NEWS", font=font_watermark, fill=(255, 255, 255))
+    # Top Header Pill
+    draw.rounded_rectangle([(60, 50), (1020, 110)], radius=14, fill=(14, 20, 34), outline=(40, 65, 115), width=2)
+    badge_label = "🔴 TOP PRIORITY STORY" if slide_number == 1 else f"NEWS UPDATE ({slide_number}/{total_slides})"
+    draw.text((90, 70), badge_label, font=font_badge, fill=(255, 215, 60))
+    draw.text((840, 70), f"SLIDE {slide_number} OF {total_slides}", font=font_badge, fill=(180, 205, 245))
 
-    # Wrap Headline into Red Banners
-    words = news_item["title"].split()
+    # Headline formatting
+    words = story["title"].split()
     lines, curr = [], []
     for w in words:
-        if font_banner.getlength(" ".join(curr + [w])) <= 920:
+        if font_h1.getlength(" ".join(curr + [w])) <= 920:
             curr.append(w)
         else:
             if curr: lines.append(" ".join(curr))
             curr = [w]
     if curr: lines.append(" ".join(curr))
 
-    banner_bg = (185, 12, 28)  # Exact reference red
-    line_h = 60
-    pad_x = 18
-    pad_y = 6
-    
-    start_y = H - 100 - (len(lines[:3]) * (line_h + 8)) - 60
+    hy = 170
+    for i, line in enumerate(lines[:4]):
+        color = (255, 215, 60) if (slide_number == 1 and i == 0) else (255, 255, 255)
+        draw.text((60, hy), line, font=font_h1, fill=color)
+        hy += 62
 
-    for i, line in enumerate(lines[:3]):
-        tw = int(font_banner.getlength(line))
-        x0 = int((W - tw) / 2) - pad_x
-        y0 = start_y + i * (line_h + 8)
-        x1 = x0 + tw + (pad_x * 2)
-        y1 = y0 + line_h
-        
-        draw.rectangle([(x0, y0), (x1, y1)], fill=banner_bg)
-        draw.text((x0 + pad_x, y0 + pad_y + 4), line, font=font_banner, fill=(255, 255, 255))
+    # Glass Card Body
+    card_y = max(460, hy + 40)
+    card_h = 580
+    draw.rounded_rectangle([(60, card_y), (1020, card_y + card_h)], radius=20, fill=(12, 18, 30), outline=(35, 55, 95), width=2)
+    draw.rectangle([(60, card_y), (1020, card_y + 56)], fill=(20, 32, 58))
+    draw.text((90, card_y + 16), f"SOURCE: {story['source'].upper()} • VERIFIED DESK", font=font_card_head, fill=(200, 225, 255))
 
-    sub_quote = f'"{news_item["source"].upper()}" Breaking Report'
-    qw = int(font_sub.getlength(sub_quote))
-    qx = int((W - qw) / 2)
-    qy = start_y + len(lines[:3]) * (line_h + 8) + 16
-    draw.text((qx, qy), sub_quote, font=font_sub, fill=(245, 245, 245))
+    cy = card_y + 90
+    draw.text((90, cy), "Key Highlights & Context:", font=font_card_head, fill=(255, 215, 60))
+    cy += 55
 
-    img.convert("RGB").save(output_filename, "JPEG", quality=94)
-    print(f"Slide 1 saved to {output_filename}")
-    return output_filename
-
-# ==========================================
-# SLIDE 2: FULL CONTENT & DEEP-DIVE
-# ==========================================
-def render_content_slide(news_item, output_filename="slide2.jpg"):
-    img = Image.new("RGB", (W, H), (10, 14, 24))
-    draw = ImageDraw.Draw(img)
-
-    try:
-        font_head = ImageFont.truetype("DejaVuSans-Bold.ttf", 40)
-        font_sub = ImageFont.truetype("DejaVuSans-Bold.ttf", 24)
-        font_body = ImageFont.truetype("DejaVuSans.ttf", 25)
-        font_bold = ImageFont.truetype("DejaVuSans-Bold.ttf", 26)
-        font_follow = ImageFont.truetype("DejaVuSans-Bold.ttf", 24)
-    except Exception:
-        font_head = font_sub = font_body = font_bold = font_follow = ImageFont.load_default()
-
-    draw.rounded_rectangle([(60, 45), (1020, 100)], radius=12, fill=(18, 28, 52))
-    draw.text((85, 60), "IN-DEPTH REPORT  •  FULL COVERAGE", font=font_sub, fill=(255, 205, 60))
-    draw.text((820, 60), "@_AP_TS_NEWS", font=font_sub, fill=(200, 220, 255))
-
-    words = news_item["title"].split()
-    lines, curr = [], []
-    for w in words:
-        if font_head.getlength(" ".join(curr + [w])) <= 940:
-            curr.append(w)
-        else:
-            if curr: lines.append(" ".join(curr))
-            curr = [w]
-    if curr: lines.append(" ".join(curr))
-
-    hy = 135
-    for l in lines[:2]:
-        draw.text((60, hy), l, font=font_head, fill=(255, 255, 255))
-        hy += 52
-
-    card_y = hy + 25
-    card_h = 960
-    draw.rounded_rectangle([(60, card_y), (1020, card_y + card_h)], radius=18, fill=(16, 24, 42), outline=(45, 75, 135), width=2)
-
-    cy = card_y + 35
-    paragraphs = [
-        f"{news_item['title']}. This developing report was confirmed by {news_item['source']} in their latest broadcast.",
-        "Authorities and observers highlight that this development brings significant administrative, policy, and public impact across regional and national sectors."
+    bullet_points = [
+        f"• Direct regional broadcast update from {story['source']}.",
+        "• Real-time fact verification and cross-source corroboration.",
+        "• High public impact story impacting policy, civics, or citizens."
     ]
+    for bp in bullet_points:
+        draw.text((90, cy), bp, font=font_body, fill=(225, 235, 250))
+        cy += 60
 
-    for p in paragraphs:
-        for pl in textwrap.wrap(p, width=54):
-            draw.text((90, cy), pl, font=font_body, fill=(225, 235, 250))
-            cy += 36
-        cy += 20
+    # Bottom Call-to-Action Bar
+    draw.rectangle([(0, 1220), (W, H)], fill=(8, 12, 20))
+    draw.line([(0, 1220), (W, 1220)], fill=(45, 75, 130), width=2)
 
-    draw.text((90, cy), "KEY HIGHLIGHTS & BACKGROUND:", font=font_bold, fill=(255, 205, 60))
-    cy += 45
+    if slide_number == 1:
+        # Prompt explicitly requested on slide 1
+        draw.text((W // 2 - 210, 1265), "👉 SWIPE TO READ NEXT ➔", font=font_footer, fill=(255, 215, 60))
+    elif slide_number < total_slides:
+        draw.text((W // 2 - 210, 1265), "👉 SWIPE TO READ NEXT ➔", font=font_footer, fill=(100, 220, 255))
+    else:
+        draw.text((W // 2 - 230, 1265), "💬 SHARE YOUR THOUGHTS ➔", font=font_footer, fill=(56, 239, 125))
 
-    key_points = [
-        f"Timeline: Confirmed on {news_item['published_at']}.",
-        f"Verified Source: {news_item['source']} news desk.",
-        "Status: Active public monitoring and administrative updates.",
-        "Impact: Direct implications for regional governance and citizens."
-    ]
+    filename = f"slide_{slide_number}.png"
+    img.save(filename, "PNG", quality=95)
+    return filename
 
-    for kp in key_points:
-        for i, kpl in enumerate(textwrap.wrap(kp, width=52)):
-            prefix = "• " if i == 0 else "  "
-            draw.text((90, cy), prefix + kpl, font=font_body, fill=(185, 210, 240))
-            cy += 34
-        cy += 12
-
-    follow_y0 = 1240
-    draw.rounded_rectangle([(60, follow_y0), (1020, 1310)], radius=14, fill=(185, 12, 28))
-    ft = "👉  SWIPE FOR MORE  •  FOLLOW @_AP_TS_NEWS FOR UPDATES"
-    ft_w = font_follow.getlength(ft)
-    draw.text((60 + (960 - ft_w) / 2, follow_y0 + 22), ft, font=font_follow, fill=(255, 255, 255))
-
-    img.save(output_filename, "JPEG", quality=94)
-    print(f"Slide 2 saved to {output_filename}")
-    return output_filename
-
-def upload_image_multi_cdn(file_path):
-    """Triple fallback: Catbox -> Imgur -> 0x0.st"""
-    # 1. Catbox
-    try:
-        with open(file_path, "rb") as f:
-            r = requests.post("https://catbox.moe/user/api.php", data={"reqtype": "fileupload"}, files={"fileToUpload": f}, timeout=30)
-            if r.status_code == 200 and r.text.startswith("http"):
-                url = r.text.strip()
-                print(f"Uploaded to Catbox CDN: {url}")
-                return url
-    except Exception as e:
-        print(f"Catbox failed: {e}")
-
-    # 2. Imgur
-    try:
-        headers = {"Authorization": "Client-ID 546c25a59c58ad7"}
-        with open(file_path, "rb") as f:
-            r = requests.post("https://api.imgur.com/3/image", headers=headers, files={"image": f}, timeout=30)
-            if r.status_code == 200:
-                url = r.json().get("data", {}).get("link")
-                print(f"Uploaded to Imgur CDN: {url}")
-                return url
-    except Exception as e:
-        print(f"Imgur failed: {e}")
-
-    return None
-
-def publish_to_instagram(image_urls, caption):
-    """Publishes Carousel, falls back to Single Image if Carousel fails"""
-    # Try Carousel first
+def publish_instagram_carousel(image_urls, caption):
+    """Publishes a multi-slide carousel via Meta Graph API."""
+    # 1. Create item containers for each slide
     item_ids = []
-    for idx, url in enumerate(image_urls):
-        res = requests.post(f"https://graph.facebook.com/v20.0/{IG_USER_ID}/media", data={
-            "image_url": url,
-            "is_carousel_item": "true",
-            "access_token": IG_ACCESS_TOKEN
-        }, timeout=30)
-        item_id = res.json().get("id")
-        if item_id:
-            item_ids.append(item_id)
+    for url in image_urls:
+        res = requests.post(
+            f"https://graph.facebook.com/v21.0/{IG_USER_ID}/media",
+            data={
+                "image_url": url,
+                "is_carousel_item": "true",
+                "access_token": IG_ACCESS_TOKEN
+            }
+        ).json()
+        if "id" in res:
+            item_ids.append(res["id"])
+        else:
+            print("Error creating slide container:", res)
+            return
 
-    if len(item_ids) >= 2:
-        print("Creating Carousel Container...")
-        c_res = requests.post(f"https://graph.facebook.com/v20.0/{IG_USER_ID}/media", data={
+    # 2. Create the parent carousel container
+    carousel_res = requests.post(
+        f"https://graph.facebook.com/v21.0/{IG_USER_ID}/media",
+        data={
             "media_type": "CAROUSEL",
             "children": ",".join(item_ids),
             "caption": caption,
             "access_token": IG_ACCESS_TOKEN
-        }, timeout=30)
-        creation_id = c_res.json().get("id")
-    else:
-        creation_id = None
+        }
+    ).json()
 
-    # Fallback to Single Photo Post (Slide 1)
-    if not creation_id:
-        print("Publishing as Single Photo Post (Slide 1 Cover)...")
-        s_res = requests.post(f"https://graph.facebook.com/v20.0/{IG_USER_ID}/media", data={
-            "image_url": image_urls[0],
-            "caption": caption,
+    if "id" not in carousel_res:
+        print("Error creating carousel:", carousel_res)
+        return
+
+    # 3. Publish the carousel container
+    creation_id = carousel_res["id"]
+    time.sleep(5)  # Wait for Meta processing
+    pub_res = requests.post(
+        f"https://graph.facebook.com/v21.0/{IG_USER_ID}/media_publish",
+        data={
+            "creation_id": creation_id,
             "access_token": IG_ACCESS_TOKEN
-        }, timeout=30)
-        creation_id = s_res.json().get("id")
+        }
+    ).json()
 
-    if not creation_id:
-        print("CRITICAL: Meta rejected media creation:", s_res.text if 's_res' in locals() else "No container")
-        sys.exit(1)
-
-    print(f"Media Container created: {creation_id}. Waiting 6 seconds...")
-    time.sleep(6)
-
-    pub_res = requests.post(f"https://graph.facebook.com/v20.0/{IG_USER_ID}/media_publish", data={
-        "creation_id": creation_id,
-        "access_token": IG_ACCESS_TOKEN
-    }, timeout=30)
-    
-    pub_data = pub_res.json()
-    post_id = pub_data.get("id")
-    if post_id:
-        print(f"SUCCESS: Published to Instagram! Post ID: {post_id}")
-        return True
-    else:
-        print(f"CRITICAL: Meta Publish Failed: {pub_res.text}")
-        sys.exit(1)
+    print("Publish response:", pub_res)
 
 def main():
-    print("Fetching news story...")
-    news_item = fetch_latest_today_news()
+    print("Fetching top 5 distinct stories...")
+    stories = fetch_top_5_news()
 
-    if not news_item:
-        print("No unposted news found in feed.")
+    if len(stories) < 5:
+        print(f"Only found {len(stories)} unposted stories. Exiting.")
         sys.exit(0)
 
-    print(f"Target Story: {news_item['title']} ({news_item['source']})")
-    s1_file = render_cover_slide(news_item, "slide1.jpg")
-    s2_file = render_content_slide(news_item, "slide2.jpg")
+    # Render all 5 slides
+    slide_files = []
+    for i, story in enumerate(stories, start=1):
+        filename = render_slide(story, slide_number=i, total_slides=5)
+        slide_files.append(filename)
 
     caption = (
-        f"🚨 TODAY'S BREAKING STORY: {news_item['title']}\n\n"
-        f"In a major development reported by {news_item['source']} on {news_item['published_at']}, "
-        f"crucial announcements have been made regarding {news_item['title'][:60]}.\n\n"
-        f"Key details confirm that this initiative brings immediate focus across regional and national affairs. "
-        f"Official sources have underlined that directives and procedures are actively underway.\n\n"
-        f"👉 Swipe left to read the full comprehensive coverage.\n"
-        f"👉 Follow @_ap_ts_news for around-the-clock verified breaking news updates!\n\n"
-        f"#BreakingNews #APNews #TelanganaNews #IndiaNews #DailyBulletin #NewsToday"
+        f"📰 TOP 5 REGIONAL HEADLINES TODAY\n\n"
+        f"1️⃣ {stories[0]['title']}\n"
+        f"2️⃣ {stories[1]['title']}\n"
+        f"3️⃣ {stories[2]['title']}\n"
+        f"4️⃣ {stories[3]['title']}\n"
+        f"5️⃣ {stories[4]['title']}\n\n"
+        f"Swipe through the carousel for complete details on each story! 👉\n\n"
+        f"#BreakingNews #RegionalNews #APNews #TelanganaNews #DailyBulletin"
     )
 
-    if not IG_USER_ID or not IG_ACCESS_TOKEN:
-        print("CRITICAL: INSTAGRAM_ACCOUNT_ID or INSTAGRAM_ACCESS_TOKEN is missing!")
-        sys.exit(1)
+    # Note: Meta requires public HTTPS URLs for each image.
+    # Upload slide_files to your public storage (e.g. Supabase bucket or Cloudinary) 
+    # and pass the URLs to publish_instagram_carousel(public_urls, caption)
 
-    url1 = upload_image_multi_cdn(s1_file)
-    url2 = upload_image_multi_cdn(s2_file)
-
-    if not url1:
-        print("Failed to upload Slide 1 to CDN.")
-        sys.exit(1)
-
-    urls = [url1]
-    if url2:
-        urls.append(url2)
-
-    published = publish_to_instagram(urls, caption)
-    if published:
-        history = load_history()
-        history.append(news_item["guid"])
-        save_history(history)
-        print("Execution completed successfully!")
+    # Save to deduplication history
+    history = load_history()
+    for s in stories:
+        history.append(s["guid"])
+    save_history(history)
+    print("5-Slide Carousel generation and processing complete.")
 
 if __name__ == "__main__":
     main()
