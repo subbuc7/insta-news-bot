@@ -319,14 +319,17 @@ def main():
         url = upload_slide_image(f)
         public_urls.append(url)
 
-    # Caption with correct indexing and viral hashtags
+    # Dynamically build headline lines to prevent any indexing errors
+    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+    headline_lines = []
+    for idx, story in enumerate(stories):
+        prefix = emojis[idx] if idx < len(emojis) else f"{idx + 1}."
+        headline_lines.append(f"{prefix} {story['title']}")
+    headlines_formatted = "\n".join(headline_lines)
+
     caption = (
         f"🚨 TOP 5 BREAKING HEADLINES TODAY\n\n"
-        f"1️⃣ {stories[0]['title']}\n"
-        f"2️⃣ {stories['title']}\n"
-        f"3️⃣ {stories['title']}\n"
-        f"4️⃣ {stories[3]['title']}\n"
-        f"5️⃣ {stories[4]['title']}\n\n"
+        f"{headlines_formatted}\n\n"
         f"👉 Swipe through the carousel to read full breakdowns of each story!\n\n"
         f"💬 Which headline matters most to you? Drop your comment below.\n\n"
         f"•\n•\n•\n"
@@ -349,4 +352,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
+        
