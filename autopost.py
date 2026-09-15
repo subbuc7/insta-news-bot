@@ -80,7 +80,7 @@ def get_profile_photo():
 def fetch_top_5_news():
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     history = load_history()
-    selected_stories = []
+    new_stories = []
     fallback_stories = []
 
     for feed_url in FEEDS:
@@ -123,19 +123,22 @@ def fetch_top_5_news():
                 if len(fallback_stories) < 5:
                     fallback_stories.append(story)
 
-                if guid not in history:
-                    selected_stories.append(story)
+                if guid not in history and story not in new_stories:
+                    new_stories.append(story)
 
-                if len(selected_stories) == 5:
-                    return selected_stories
         except Exception as e:
             print(f"Error reading feed {feed_url}: {e}")
 
-    if TRIGGER_TYPE == "workflow_dispatch" and len(selected_stories) < 5:
-        print("Manual click detected: utilizing latest available feed stories.")
-        return fallback_stories
+    # Combine new stories first, then fill remaining slots with latest fallback stories
+    final_stories = list(new_stories)
+    for fb in fallback_stories:
+        if len(final_stories) >= 5:
+            break
+        if fb["guid"] not in [s["guid"] for s in final_stories]:
+            final_stories.append(fb)
 
-    return selected_stories
+    print(f"Found {len(new_stories)} new stories. Total prepared slides: {len(final_stories)}")
+    return final_stories[:5]
 
 def render_cover_slide(profile_photo, total_slides=6):
     W, H = 1080, 1350
@@ -486,54 +489,46 @@ def main():
     stories = fetch_top_5_news()
 
     if len(stories) < 5:
-        print(f"Found only {len(stories)} stories. Need 5 for carousel.")
+        print("Not enough stories available to generate carousel. Exiting.")
         sys.exit(0)
 
+    print(f"Step 2: Preparing profile photo and cover slide...")
     profile_photo = get_profile_photo()
-    print("Step 2: Rendering Slide 1 (Cover with Profile Background)...")
     cover_file = render_cover_slide(profile_photo, total_slides=6)
+
     slide_files = [cover_file]
-
-    print("Step 3: Rendering Slides 2 to 6 with unique news photography...")
+    print(f"Step 3: Rendering 5 story slides...")
     for idx, story in enumerate(stories, start=1):
-        slide_num = idx + 1
-        filename = render_news_slide(story, slide_number=slide_num, story_index=idx, total_slides=6)
-        slide_files.append(filename)
+        slide_file = render_news_slide(story, slide_number=idx + 1, story_index=idx, total_slides=6)
+        slide_files.append(slide_file)
 
-    public_urls = []
-    print("Step 4: Uploading direct image URLs for all 6 slides...")
+    print(f"Step 4: Uploading {len(slide_files)} slides to public host...")
+    uploaded_urls = []
     for f in slide_files:
         url = upload_slide_image(f)
-        public_urls.append(url)
-
-    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
-    headline_lines = []
-    for idx, story in enumerate(stories):
-        prefix = emojis[idx] if idx < len(emojis) else f"{idx + 1}."
-        headline_lines.append(f"{prefix} {story['title']}")
-    headlines_formatted = "\n".join(headline_lines)
+        uploaded_urls.append(url)
 
     caption = (
-        f"🚨 TODAY'S TOP HEADLINES OF ANDHRA PRADESH & TELANGANA\n\n"
-        f"Swipe through this 6-slide carousel for full breakdowns of each story:\n\n"
-        f"{headlines_formatted}\n\n"
-        f"👉 Swipe to read all 5 updates!\n\n"
-        f"💬 Which update impacts you the most? Share your thoughts below.\n\n"
-        f"•\n•\n•\n"
-        f"#Trending #ExplorePage #ViralPost #BreakingNews #InstaNews "
-        f"#AndhraPradesh #Telangana #Hyderabad #Amaravati #APNews "
-        f"#TelanganaNews #CurrentAffairs #DailyNews #NewsUpdate"
+        "🔴 DAILY REGIONAL ROUNDUP | Andhra Pradesh & Telangana\n\n"
+        f"1️⃣ {stories[0]['title']}\n"
+        f"2️⃣ {stories['title']}\n"
+        f"3️⃣ {stories['title']}\n"
+        f"4️⃣ {stories['title']}\n"
+        f"5️⃣ {stories['title']}\n\n"
+        "Swipe across the carousel to read full verified briefs from The Hindu bureau.\n\n"
+        "#AndhraPradesh #Telangana #APNews #TelanganaNews #HyderabadNews #Amaravati #DailyNews"
     )
 
-    print("Step 5: Publishing 6-slide carousel via Meta Graph API...")
-    publish_instagram_carousel(public_urls, caption)
+    print("Step 5: Publishing carousel to Instagram...")
+    publish_instagram_carousel(uploaded_urls, caption)
 
+    # Save posted guids so duplicate posts are avoided
     history = load_history()
     for s in stories:
         if s["guid"] not in history:
             history.append(s["guid"])
     save_history(history)
-    print("6-Slide Carousel workflow completed successfully.")
+    print("Execution completed successfully.")
 
 if __name__ == "__main__":
     main()
