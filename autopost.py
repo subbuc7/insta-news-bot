@@ -65,7 +65,7 @@ def fetch_top_5_news():
         if len(selected_stories) == 5:
             break
 
-    # If triggered manually, guarantee 5 stories are returned
+    # If triggered manually, guarantee 5 stories are always returned
     if TRIGGER_TYPE == "workflow_dispatch" and len(selected_stories) < 5:
         print("Manual click detected: utilizing latest available feed stories.")
         return fallback_stories
@@ -77,7 +77,7 @@ def render_slide(story, slide_number, total_slides=5):
     img = Image.new("RGB", (W, H), (4, 6, 10))
     draw = ImageDraw.Draw(img)
 
-    # Dark luxury gradient
+    # Dark gradient background
     for y in range(H):
         r = int(4 + (y / H) * 8)
         g = int(6 + (y / H) * 12)
@@ -149,14 +149,14 @@ def render_slide(story, slide_number, total_slides=5):
     else:
         draw.text((W // 2 - 230, 1265), "💬 SHARE YOUR THOUGHTS ➔", font=font_footer, fill=(56, 239, 125))
 
-    # Meta requires JPEG format
+    # Save as JPEG for Meta API
     filename = f"slide_{slide_number}.jpg"
     img.save(filename, "JPEG", quality=92, optimize=True)
     return filename
 
 def upload_slide_image(local_filepath):
     """Uploads image with multi-provider fallbacks to ensure a direct HTTPS image URL."""
-    # 1. Try Uguu.se (reliable temporary host, direct image/jpeg link)
+    # 1. Try Uguu.se
     try:
         with open(local_filepath, "rb") as f:
             r = requests.post("https://uguu.se/upload.php", files={"files[]": f}, timeout=25)
@@ -250,7 +250,7 @@ def publish_instagram_carousel(image_urls, caption):
         ).json()
 
         if "id" not in res:
-            print("Meta API Error creating slide container:", json.dumps(res, indent=2))
+            print(f"Meta API Error creating slide {i} container:", json.dumps(res, indent=2))
             sys.exit(1)
 
         item_id = res["id"]
@@ -320,13 +320,34 @@ def main():
         url = upload_slide_image(f)
         public_urls.append(url)
 
+    # Ready-to-publish caption with viral and regional hashtags
     caption = (
-        f"📰 TOP 5 REGIONAL HEADLINES TODAY\n\n"
+        f"🚨 TOP 5 BREAKING HEADLINES TODAY\n\n"
         f"1️⃣ {stories[0]['title']}\n"
         f"2️⃣ {stories['title']}\n"
         f"3️⃣ {stories[2]['title']}\n"
         f"4️⃣ {stories[3]['title']}\n"
         f"5️⃣ {stories[4]['title']}\n\n"
-        f"👉 Swipe through the carousel for complete details on each story!\n\n"
-        f"#BreakingNews #RegionalNews #APNews #TelanganaNews #
+        f"👉 Swipe through the carousel to read full breakdowns of each story!\n\n"
+        f"💬 Which headline matters most to you? Drop your comment below.\n\n"
+        f"•\n•\n•\n"
+        f"#Trending #ExplorePage #ViralPost #BreakingNews #InstaNews "
+        f"#AndhraPradesh #Telangana #Hyderabad #Amaravati #APNews "
+        f"#TelanganaNews #CurrentAffairs #DailyNews #NewsUpdate"
+    )
+
+    # Publish to Instagram
+    print("Step 4: Publishing carousel via Meta Graph API...")
+    publish_instagram_carousel(public_urls, caption)
+
+    # Update history only after successful publish
+    history = load_history()
+    for s in stories:
+        if s["guid"] not in history:
+            history.append(s["guid"])
+    save_history(history)
+    print("Workflow completed successfully.")
+
+if __name__ == "__main__":
+    main()
     
