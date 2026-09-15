@@ -2,9 +2,9 @@ name: Auto Post News to Instagram
 
 on:
   schedule:
-    # Runs automatically every 1 hour (at minute 15 past the hour to avoid GitHub queue delays)
+    # Runs automatically every 1 hour (at minute 15 past the hour)
     - cron: '15 * * * *'
-  workflow_dispatch: # Allows manual trigger anytime from GitHub Actions tab
+  workflow_dispatch: # Allows manual trigger anytime from Actions tab
 
 jobs:
   run-news-bot:
@@ -22,7 +22,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
 
       - name: Install Dependencies
         run: |
