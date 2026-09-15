@@ -22,11 +22,11 @@ FEEDS = [
 ]
 
 UNIQUE_FALLBACK_IMAGES = [
-    "https://images.unsplash.com/photo-1541872703-74c5e44368f9?w=1080&q=80",  # Story 1: Amaravati / Governance
-    "https://images.unsplash.com/photo-1605379399642-870262d3d051?w=1080&q=80",  # Story 2: Hyderabad / City
-    "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?w=1080&q=80",  # Story 3: Recruitment / Public Admin
-    "https://images.unsplash.com/photo-1609766857041-ed402ea8069a?w=1080&q=80",  # Story 4: Tirumala / Temple & Heritage
-    "https://images.unsplash.com/photo-1519692933481-e162a57d6721?w=1080&q=80",  # Story 5: Weather & Transit
+    "https://images.unsplash.com/photo-1541872703-74c5e44368f9?w=1080&q=80",
+    "https://images.unsplash.com/photo-1605379399642-870262d3d051?w=1080&q=80",
+    "https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?w=1080&q=80",
+    "https://images.unsplash.com/photo-1609766857041-ed402ea8069a?w=1080&q=80",
+    "https://images.unsplash.com/photo-1519692933481-e162a57d6721?w=1080&q=80",
 ]
 
 def load_history():
@@ -48,7 +48,6 @@ def clean_text(raw_html):
     return " ".join(clean.split())
 
 def get_profile_photo():
-    """Finds local profile photo (profile.jpg) or fetches profile photo from Instagram account."""
     for local_name in ["profile.jpg", "profile.png", "avatar.jpg", "avatar.png"]:
         if os.path.exists(local_name):
             try:
@@ -139,11 +138,9 @@ def fetch_top_5_news():
     return selected_stories
 
 def render_cover_slide(profile_photo, total_slides=6):
-    """Renders Slide 1: Cover slide with profile photo background and prominent headlines."""
     W, H = 1080, 1350
     canvas = Image.new("RGB", (W, H), (6, 10, 18))
 
-    # Background: User's profile photo
     if profile_photo:
         photo_w, photo_h = profile_photo.size
         ratio = max(W / photo_w, H / photo_h)
@@ -154,7 +151,6 @@ def render_cover_slide(profile_photo, total_slides=6):
         bg_crop = photo_resized.crop((left, top, left + W, top + H))
         canvas.paste(bg_crop, (0, 0))
 
-    # Dark overlay for contrast
     overlay = Image.new("RGBA", (W, H), (6, 10, 18, 205))
     canvas = Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
     draw = ImageDraw.Draw(canvas)
@@ -167,12 +163,10 @@ def render_cover_slide(profile_photo, total_slides=6):
     except Exception:
         font_tag = font_h1 = font_subtitle = font_footer = ImageFont.load_default()
 
-    # Top Header Tag
     draw.rounded_rectangle([(60, 50), (1020, 110)], radius=14, fill=(12, 18, 32), outline=(50, 85, 140), width=2)
     draw.text((85, 70), "🔴 DAILY REGIONAL ROUNDUP  |  COVER", font=font_tag, fill=(255, 215, 60))
     draw.text((860, 70), f"SLIDE 1/{total_slides}", font=font_tag, fill=(180, 210, 255))
 
-    # Center Profile Circular Avatar
     if profile_photo:
         avatar_size = 280
         avatar_x = (W - avatar_size) // 2
@@ -182,18 +176,15 @@ def render_cover_slide(profile_photo, total_slides=6):
         m_draw = ImageDraw.Draw(mask)
         m_draw.ellipse([(0, 0), (avatar_size, avatar_size)], fill=255)
 
-        # Gold ring border around avatar
         draw.ellipse([(avatar_x - 6, avatar_y - 6), (avatar_x + avatar_size + 6, avatar_y + avatar_size + 6)], fill=(255, 215, 60))
         draw.ellipse([(avatar_x - 2, avatar_y - 2), (avatar_x + avatar_size + 2, avatar_y + avatar_size + 2)], fill=(10, 16, 28))
         canvas.paste(thumb, (avatar_x, avatar_y), mask)
 
-    # Main Headline Card
     card_y = 530
     draw.rounded_rectangle([(60, card_y), (1020, 1150)], radius=24, fill=(10, 16, 28), outline=(45, 75, 125), width=2)
     draw.rectangle([(60, card_y), (1020, card_y + 54)], fill=(18, 28, 50))
     draw.text((85, card_y + 15), "EXECUTIVE BRIEFING  •  ANDHRA & TELANGANA", font=font_tag, fill=(255, 215, 60))
 
-    # Cover Title Lines
     t_y = card_y + 95
     draw.text((85, t_y), "TODAY'S TOP HEADLINES", font=font_h1, fill=(255, 215, 60))
     t_y += 75
@@ -202,7 +193,6 @@ def render_cover_slide(profile_photo, total_slides=6):
     draw.text((85, t_y), "& TELANGANA", font=font_h1, fill=(0, 240, 255))
     t_y += 110
 
-    # Sub-bullets
     today_str = datetime.now(IST).strftime("%d %B %Y").upper()
     draw.text((85, t_y), "•  5 MAJOR REGIONAL DEVELOPMENTS", font=font_subtitle, fill=(200, 225, 255))
     t_y += 48
@@ -210,7 +200,6 @@ def render_cover_slide(profile_photo, total_slides=6):
     t_y += 48
     draw.text((85, t_y), "•  VERIFIED BY THE HINDU BUREAU", font=font_subtitle, fill=(56, 239, 125))
 
-    # Bottom CTA Bar
     draw.rectangle([(0, 1220), (W, H)], fill=(8, 12, 20))
     draw.line([(0, 1220), (W, 1220)], fill=(45, 75, 130), width=2)
     draw.text((W // 2 - 220, 1265), "👉 SWIPE TO READ STORIES ➔", font=font_footer, fill=(255, 215, 60))
@@ -220,10 +209,8 @@ def render_cover_slide(profile_photo, total_slides=6):
     return filename
 
 def get_unique_slide_image(story, story_index):
-    """Fetches unique news photo for this story or assigns a dedicated per-story fallback."""
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-    # 1. Direct image from RSS
     if story.get("rss_img") and story["rss_img"].startswith("http"):
         try:
             r = requests.get(story["rss_img"], headers=headers, timeout=8)
@@ -232,7 +219,6 @@ def get_unique_slide_image(story, story_index):
         except Exception:
             pass
 
-    # 2. Extract og:image and og:description from article URL
     try:
         if story.get("link"):
             res = requests.get(story["link"], headers=headers, timeout=6)
@@ -256,7 +242,6 @@ def get_unique_slide_image(story, story_index):
     except Exception as e:
         print(f"Story {story_index}: og:image error: {e}")
 
-    # 3. Guaranteed unique fallback for each story position
     fallback_url = UNIQUE_FALLBACK_IMAGES[(story_index - 1) % len(UNIQUE_FALLBACK_IMAGES)]
     try:
         r = requests.get(fallback_url, headers=headers, timeout=8)
@@ -268,11 +253,9 @@ def get_unique_slide_image(story, story_index):
     return None
 
 def render_news_slide(story, slide_number, story_index, total_slides=6):
-    """Renders Slides 2 to 6 with news photo, headline, and actual description."""
     W, H = 1080, 1350
     canvas = Image.new("RGB", (W, H), (6, 10, 16))
 
-    # Fetch unique news photograph
     photo = get_unique_slide_image(story, story_index)
     if photo:
         photo_w, photo_h = photo.size
@@ -285,7 +268,6 @@ def render_news_slide(story, slide_number, story_index, total_slides=6):
         photo_cropped = photo_resized.crop((left, top, left + target_w, top + target_h))
         canvas.paste(photo_cropped, (0, 0))
 
-    # Gradient overlays
     gradient = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     g_draw = ImageDraw.Draw(gradient)
 
@@ -311,13 +293,11 @@ def render_news_slide(story, slide_number, story_index, total_slides=6):
     except Exception:
         font_badge = font_h1 = font_card_head = font_body = font_footer = font_tick = ImageFont.load_default()
 
-    # Top Header Pill
     draw.rounded_rectangle([(60, 45), (1020, 105)], radius=14, fill=(10, 16, 28), outline=(50, 85, 140), width=2)
     badge_label = "🔴 TOP PRIORITY STORY" if story_index == 1 else f"AP & TS UPDATE (STORY {story_index}/5)"
     draw.text((85, 65), badge_label, font=font_badge, fill=(255, 215, 60))
     draw.text((860, 65), f"SLIDE {slide_number}/{total_slides}", font=font_badge, fill=(180, 210, 255))
 
-    # Headline
     words = story["title"].split()
     lines, curr = [], []
     for w in words:
@@ -334,23 +314,19 @@ def render_news_slide(story, slide_number, story_index, total_slides=6):
         draw.text((60, hy), line, font=font_h1, fill=color)
         hy += 58
 
-    # Frosted Info Card
     card_y = max(820, hy + 25)
     card_h = 360
     draw.rounded_rectangle([(60, card_y), (1020, card_y + card_h)], radius=18, fill=(12, 18, 30), outline=(40, 65, 110), width=2)
     draw.rectangle([(60, card_y), (1020, card_y + 52)], fill=(18, 30, 52))
 
-    # Header: "DESCRIPTION • THE HINDU" with verified blue tick badge
     draw.text((85, card_y + 14), "DESCRIPTION", font=font_card_head, fill=(255, 215, 60))
     draw.text((275, card_y + 14), "•  THE HINDU", font=font_card_head, fill=(200, 225, 255))
 
-    # Verified blue tick badge
     badge_x = 445
     badge_y = card_y + 16
     draw.ellipse([(badge_x, badge_y), (badge_x + 22, badge_y + 22)], fill=(29, 155, 240))
     draw.text((badge_x + 4, badge_y + 2), "✓", font=font_tick, fill=(255, 255, 255))
 
-    # Important Points / Real News Description inside the box
     cy = card_y + 75
     draw.text((85, cy), "Important Points & Core Details:", font=font_card_head, fill=(100, 220, 255))
     cy += 45
@@ -374,7 +350,6 @@ def render_news_slide(story, slide_number, story_index, total_slides=6):
         draw.text((85, cy), f"•  {line}", font=font_body, fill=(225, 235, 250))
         cy += 44
 
-    # Bottom Call-to-Action Bar
     draw.rectangle([(0, 1220), (W, H)], fill=(8, 12, 20))
     draw.line([(0, 1220), (W, 1220)], fill=(45, 75, 130), width=2)
 
@@ -388,7 +363,6 @@ def render_news_slide(story, slide_number, story_index, total_slides=6):
     return filename
 
 def upload_slide_image(local_filepath):
-    """Uploads image to a public temporary host returning direct image/jpeg URLs."""
     try:
         with open(local_filepath, "rb") as f:
             r = requests.post("https://uguu.se/upload.php", files={"files[]": f}, timeout=25)
@@ -427,7 +401,6 @@ def upload_slide_image(local_filepath):
     sys.exit(1)
 
 def wait_for_container(container_id, max_attempts=15):
-    """Polls Meta Graph API until the media container status is FINISHED."""
     for attempt in range(max_attempts):
         url = f"https://graph.facebook.com/v21.0/{container_id}?fields=status_code,status&access_token={IG_ACCESS_TOKEN}"
         r = requests.get(url).json()
@@ -442,7 +415,6 @@ def wait_for_container(container_id, max_attempts=15):
     return True
 
 def publish_instagram_carousel(image_urls, caption):
-    """Publishes a 6-slide carousel using the Meta Graph API."""
     if not IG_USER_ID or not IG_ACCESS_TOKEN:
         print("ERROR: INSTAGRAM_ACCOUNT_ID or INSTAGRAM_ACCESS_TOKEN is missing!")
         sys.exit(1)
@@ -465,7 +437,8 @@ def publish_instagram_carousel(image_urls, caption):
         if "id" not in res:
             print(f"Meta API Error creating slide {i} container:", json.dumps(res, indent=2))
             sys.exit(1)
-item_id = res["id"]
+
+        item_id = res["id"]
         wait_for_container(item_id)
         item_ids.append(item_id)
 
@@ -516,27 +489,23 @@ def main():
         print(f"Found only {len(stories)} stories. Need 5 for carousel.")
         sys.exit(0)
 
-    # 1. Render Slide 1: Cover Slide with Profile Photo
     profile_photo = get_profile_photo()
     print("Step 2: Rendering Slide 1 (Cover with Profile Background)...")
     cover_file = render_cover_slide(profile_photo, total_slides=6)
     slide_files = [cover_file]
 
-    # 2. Render Slides 2 to 6: The 5 News Stories
     print("Step 3: Rendering Slides 2 to 6 with unique news photography...")
     for idx, story in enumerate(stories, start=1):
         slide_num = idx + 1
         filename = render_news_slide(story, slide_number=slide_num, story_index=idx, total_slides=6)
         slide_files.append(filename)
 
-    # 3. Upload all 6 slides
     public_urls = []
     print("Step 4: Uploading direct image URLs for all 6 slides...")
     for f in slide_files:
         url = upload_slide_image(f)
         public_urls.append(url)
 
-    # Dynamic headline lines for caption
     emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
     headline_lines = []
     for idx, story in enumerate(stories):
@@ -556,7 +525,6 @@ def main():
         f"#TelanganaNews #CurrentAffairs #DailyNews #NewsUpdate"
     )
 
-    # 4. Publish 6-slide carousel to Instagram
     print("Step 5: Publishing 6-slide carousel via Meta Graph API...")
     publish_instagram_carousel(public_urls, caption)
 
@@ -569,4 +537,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-   
