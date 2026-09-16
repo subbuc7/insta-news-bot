@@ -17,16 +17,16 @@ HISTORY_FILE = "posted_history.json"
 
 RSS_FEEDS = [
     ("Google News Telugu", "https://news.google.com/rss?hl=te&gl=IN&ceid=IN:te"),
+    ("BBC Telugu", "https://feeds.bbci.co.uk/telugu/rss.xml"),
     ("Eenadu AP", "https://www.eenadu.net/rss/andhra-pradesh-news.xml"),
     ("Eenadu TS", "https://www.eenadu.net/rss/telangana-news.xml"),
-    ("BBC Telugu", "https://feeds.bbci.co.uk/telugu/rss.xml"),
 ]
 
 # ==========================================
 # FONT LOADER & DUAL-FONT ENGINE
 # ==========================================
 def setup_fonts():
-    """Downloads NotoSansTelugu if missing, and loads both English & Telugu fonts."""
+    """Downloads Telugu font if missing, and loads both English & Telugu fonts."""
     telugu_font_path = "NotoSansTelugu-Bold.ttf"
     if not os.path.exists(telugu_font_path):
         print("Downloading NotoSansTelugu-Bold.ttf...")
@@ -39,7 +39,7 @@ def setup_fonts():
         except Exception as e:
             print(f"Warning: Could not download Telugu font ({e}). Using system fonts.")
 
-    # Locate English font (DejaVuSans-Bold)
+    # Locate English font (DejaVuSans-Bold on Ubuntu / GitHub Actions)
     english_font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     if not os.path.exists(english_font_path):
         english_font_path = "DejaVuSans-Bold.ttf"
@@ -57,7 +57,7 @@ def setup_fonts():
             return fe(size)
 
     return {
-        # Single English fonts for UI badges, logos, and footers
+        # Single English fonts for fixed badges, logos, and counters
         "badge_en": fe(22),
         "logo_en": fe(32),
         "footer_en": fe(20),
@@ -74,7 +74,7 @@ def is_telugu_char(ch):
     return '\u0c00' <= ch <= '\u0c7f'
 
 def draw_text_mixed(draw, xy, text, font_te, font_en, fill=(255, 255, 255)):
-    """Renders mixed Telugu and English text without missing font boxes."""
+    """Renders mixed Telugu and English text seamlessly without tofu boxes."""
     x, y = xy
     tokens = []
     curr = []
@@ -196,7 +196,7 @@ def fetch_top_stories(limit=5):
                 if len(stories) >= limit:
                     return stories
         except Exception as e:
-            print(f"Error reading feed {url}: {e}")
+            print(f"Note: Error reading feed {feed_name}: {e}")
 
     return stories
 
@@ -220,7 +220,7 @@ def render_story_slide(story, index, total, fonts, output_filename):
         except Exception:
             pass
 
-    # Smooth dark crimson gradient
+    # Smooth dark crimson gradient overlay
     grad = Image.new("RGBA", (W, bg_height), (0, 0, 0, 0))
     gdraw = ImageDraw.Draw(grad)
     for y in range(bg_height):
@@ -228,7 +228,7 @@ def render_story_slide(story, index, total, fonts, output_filename):
         gdraw.line([(0, y), (W, y)], fill=(20, 0, 2, alpha))
     img.paste(grad, (0, 0), grad)
 
-    # 2. Top UI Badges
+    # 2. Top UI Badges (Drawn exclusively in English font)
     draw.rounded_rectangle([(50, 45), (250, 95)], radius=10, fill=(20, 20, 20), outline=(255, 215, 0), width=2)
     draw.text((70, 58), f"STORY {index}/{total}", font=fonts["badge_en"], fill=(255, 215, 0))
 
@@ -237,7 +237,7 @@ def render_story_slide(story, index, total, fonts, output_filename):
     draw.text((820, 54), "AP", font=fonts["logo_en"], fill=(235, 45, 45))
     draw.text((875, 54), "TS NEWS", font=fonts["logo_en"], fill=(255, 215, 0))
 
-    # 3. Dual-Color Telugu Headline
+    # 3. Dual-Color Headline
     ft_h, fe_h = fonts["headline"]
     wrapped_headlines = wrap_text_mixed(story["title"], ft_h, fe_h, 980)
     hy = bg_height + 25
@@ -296,12 +296,15 @@ def render_story_slide(story, index, total, fonts, output_filename):
 # PUBLIC IMAGE UPLOADER
 # ==========================================
 def upload_slide(filepath):
+    """Uploads slide image to public host so Instagram can download it."""
     try:
         with open(filepath, "rb") as f:
-            res = requests.post("https://d.upaw.se/", files={"file": f}, timeout=30)
+            res = requests.post("https://d.upaw.se/", files={"file": f}, timeout=35)
             if res.status_code in [200, 201]:
                 data = res.json()
                 return data.get("url")
+            else:
+                print(f"Upload returned status {res.status_code}: {res.text}")
     except Exception as e:
         print(f"Error uploading {filepath}: {e}")
     return None
@@ -311,8 +314,7 @@ def upload_slide(filepath):
 # ==========================================
 def publish_carousel_to_instagram(image_urls, caption):
     if not IG_USER_ID or not IG_ACCESS_TOKEN:
-        print("Instagram credentials not found. Saved images locally.")
-        return
+        raise RuntimeError("Instagram credentials missing. Check repository secrets: INSTAGRAM_ACCOUNT_ID and INSTAGRAM_ACCESS_TOKEN.")
 
     print(f"Step 5: Publishing carousel with {len(image_urls)} slides to Instagram...")
     container_ids = []
@@ -328,8 +330,7 @@ def publish_carousel_to_instagram(image_urls, caption):
         res = requests.post(url_post, data=payload, timeout=20).json()
         cid = res.get("id")
         if not cid:
-            print(f"Failed to create slide container: {res}")
-            return
+            raise RuntimeError(f"Failed to create slide {i+1} container: {res}")
         container_ids.append(cid)
         time.sleep(2)
 
@@ -343,18 +344,23 @@ def publish_carousel_to_instagram(image_urls, caption):
     res_parent = requests.post(f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media", data=parent_payload, timeout=20).json()
     parent_cid = res_parent.get("id")
     if not parent_cid:
-        print(f"Failed parent container: {res_parent}")
-        return
+        raise RuntimeError(f"Failed parent carousel container: {res_parent}")
 
-    time.sleep(10)
+    # Wait for Instagram media processing
+    time.sleep(12)
 
-    print(f"Publishing carousel container {parent_cid}...")
+    print(f"Publishing carousel container {parent_cid} to feed...")
     publish_payload = {
         "creation_id": parent_cid,
         "access_token": IG_ACCESS_TOKEN
     }
     pub_res = requests.post(f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media_publish", data=publish_payload, timeout=25).json()
     print("Publish Response:", pub_res)
+
+    if "id" not in pub_res:
+        raise RuntimeError(f"Meta refused to publish post: {pub_res}")
+    
+    print(f"SUCCESS: Post published to Instagram! Post ID: {pub_res['id']}")
 
 # ==========================================
 # MAIN EXECUTION
@@ -364,9 +370,11 @@ def main():
     stories = fetch_top_stories(limit=5)
     
     if not stories:
-        print("No new stories found. Exiting.")
+        print("Notice: No new stories found. All current news items were already posted in previous runs.")
+        print("To force a new post, clear posted_history.json in your repository.")
         sys.exit(0)
 
+    # Render slides
     slide_files = []
     print(f"Rendering {len(stories)} story slides...")
     for idx, story in enumerate(stories, start=1):
@@ -374,30 +382,36 @@ def main():
         render_story_slide(story, idx, len(stories), fonts, filename)
         slide_files.append(filename)
 
+    # Upload slides
     uploaded_urls = []
     for sf in slide_files:
         url = upload_slide(sf)
         if url:
             print(f"Uploaded {sf} -> {url}")
             uploaded_urls.append(url)
+        else:
+            print(f"Failed upload on {sf}")
 
-    if len(uploaded_urls) == len(slide_files):
-        today_str = datetime.now(IST).strftime("%d %B %Y")
-        caption = (
-            f"🔴 నేటి తాజా వార్తలు | AP & TS NEWS SPECIAL ({today_str})\n\n"
-            f"ఆంధ్రప్రదేశ్ మరియు తెలంగాణ రాష్ట్రాల తాజా ముఖ్య వార్తలను స్లైడ్ చేయండి.\n\n"
-            f"👉 నిరంతర వార్తల కోసం మా పేజీని ఫాలో అవ్వండి: @_ap_ts_news\n\n"
-            f"#APNews #TSNews #AndhraPradesh #Telangana #TeluguNews #APTSNews"
-        )
-        publish_carousel_to_instagram(uploaded_urls, caption)
+    if len(uploaded_urls) != len(slide_files):
+        raise RuntimeError(f"Aborting: Only {len(uploaded_urls)} of {len(slide_files)} slides uploaded successfully.")
 
-        history = load_history()
-        for s in stories:
-            history.append(s["guid"])
-        save_history(history)
-        print("All stories processed and history saved successfully.")
-    else:
-        print("Failed to upload all slides. Aborting publish.")
+    today_str = datetime.now(IST).strftime("%d %B %Y")
+    caption = (
+        f"🔴 నేటి తాజా వార్తలు | AP & TS NEWS SPECIAL ({today_str})\n\n"
+        f"ఆంధ్రప్రదేశ్ మరియు తెలంగాణ రాష్ట్రాల తాజా ముఖ్య వార్తలను స్లైడ్ చేయండి.\n\n"
+        f"👉 నిరంతర వార్తల కోసం మా పేజీని ఫాలో అవ్వండి: @_ap_ts_news\n\n"
+        f"#APNews #TSNews #AndhraPradesh #Telangana #TeluguNews #APTSNews"
+    )
+    
+    publish_carousel_to_instagram(uploaded_urls, caption)
+
+    # Save to history only after successful publish
+    history = load_history()
+    for s in stories:
+        history.append(s["guid"])
+    save_history(history)
+    print("Execution completed successfully.")
 
 if __name__ == "__main__":
     main()
+    
