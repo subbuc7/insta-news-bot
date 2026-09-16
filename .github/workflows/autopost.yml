@@ -1,10 +1,10 @@
-name: Auto Post News to Instagram
+name: Auto Post AP & TS News to Instagram
 
 on:
   schedule:
-    # Runs at :01 past every 2 hours in IST (02:01, 04:01, 06:01, 08:01, 10:01, 12:01, etc.)
-    - cron: '31 */2 * * *'
-  workflow_dispatch: # Allows manual trigger anytime from Actions tab
+    # Runs at 8:00 AM, 1:00 PM, and 7:00 PM IST (2:30, 7:30, 13:30 UTC)
+    - cron: '30 2,7,13 * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub UI
 
 jobs:
   run-news-bot:
@@ -15,8 +15,6 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,15 +24,13 @@ jobs:
       - name: Install System Fonts & Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y fonts-telu fonts-noto-core
-          python -m pip install --upgrade pip
+          sudo apt-get install -y fonts-dejavu-core fonts-noto-core fonts-telu
           pip install pillow requests
 
       - name: Run News Bot
         env:
-          INSTAGRAM_ACCOUNT_ID: ${{ secrets.INSTAGRAM_ACCOUNT_ID || secrets.INSTAGRAM_USER_ID }}
+          INSTAGRAM_ACCOUNT_ID: ${{ secrets.INSTAGRAM_ACCOUNT_ID }}
           INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
-          TRIGGER_TYPE: ${{ github.event_name }}
         run: |
           python autopost.py
 
