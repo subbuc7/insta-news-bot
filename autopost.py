@@ -15,7 +15,6 @@ IG_ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN", "")
 IST = timezone(timedelta(hours=5, minutes=30))
 HISTORY_FILE = "posted_history.json"
 
-# News RSS Feeds (Telugu & Regional)
 RSS_FEEDS = [
     ("Google News Telugu", "https://news.google.com/rss?hl=te&gl=IN&ceid=IN:te"),
     ("Eenadu AP", "https://www.eenadu.net/rss/andhra-pradesh-news.xml"),
@@ -40,41 +39,42 @@ def setup_fonts():
         except Exception as e:
             print(f"Warning: Could not download Telugu font ({e}). Using system fonts.")
 
-    # Find system English font (DejaVuSans-Bold)
+    # Locate English font (DejaVuSans-Bold)
     english_font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     if not os.path.exists(english_font_path):
         english_font_path = "DejaVuSans-Bold.ttf"
 
-    def load_pair(size):
+    def fe(size):
         try:
-            fe = ImageFont.truetype(english_font_path, size)
+            return ImageFont.truetype(english_font_path, size)
         except Exception:
-            fe = ImageFont.load_default()
+            return ImageFont.load_default()
+
+    def ft(size):
         try:
-            ft = ImageFont.truetype(telugu_font_path, size)
+            return ImageFont.truetype(telugu_font_path, size)
         except Exception:
-            ft = fe
-        return ft, fe
+            return fe(size)
 
     return {
-        "badge": load_pair(22),
-        "logo": load_pair(32),
-        "headline": load_pair(40),
-        "subhead": load_pair(22),
-        "card_header": load_pair(22),
-        "body": load_pair(24),
-        "footer": load_pair(20)
+        # Single English fonts for UI badges, logos, and footers
+        "badge_en": fe(22),
+        "logo_en": fe(32),
+        "footer_en": fe(20),
+        "body_en": fe(24),
+        # Font pairs (Telugu, English) for mixed text rendering
+        "headline": (ft(40), fe(40)),
+        "subhead": (ft(22), fe(22)),
+        "card_header": (ft(22), fe(22)),
+        "body": (ft(24), fe(24)),
+        "footer_te": (ft(20), fe(20))
     }
 
 def is_telugu_char(ch):
-    """Returns True if the character belongs to the Telugu Unicode range."""
     return '\u0c00' <= ch <= '\u0c7f'
 
 def draw_text_mixed(draw, xy, text, font_te, font_en, fill=(255, 255, 255)):
-    """
-    Renders mixed Telugu and English text seamlessly without tofu boxes.
-    Uses font_te for Telugu characters and font_en for English, numbers, and symbols.
-    """
+    """Renders mixed Telugu and English text without missing font boxes."""
     x, y = xy
     tokens = []
     curr = []
@@ -104,7 +104,6 @@ def draw_text_mixed(draw, xy, text, font_te, font_en, fill=(255, 255, 255)):
     return x
 
 def get_mixed_width(text, font_te, font_en):
-    """Calculates the total pixel width of mixed-script text."""
     w = 0.0
     tokens = []
     curr = []
@@ -131,7 +130,6 @@ def get_mixed_width(text, font_te, font_en):
     return w
 
 def wrap_text_mixed(text, font_te, font_en, max_width):
-    """Wraps text across multiple lines based on mixed pixel widths."""
     words = text.split(' ')
     lines = []
     curr_line = []
@@ -164,7 +162,6 @@ def save_history(history):
         json.dump(history[-150:], f, indent=2)
 
 def fetch_top_stories(limit=5):
-    """Fetches unique same-day stories from Telugu RSS feeds."""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
@@ -223,7 +220,7 @@ def render_story_slide(story, index, total, fonts, output_filename):
         except Exception:
             pass
 
-    # Smooth dark crimson gradient over the photo bottom
+    # Smooth dark crimson gradient
     grad = Image.new("RGBA", (W, bg_height), (0, 0, 0, 0))
     gdraw = ImageDraw.Draw(grad)
     for y in range(bg_height):
@@ -231,17 +228,16 @@ def render_story_slide(story, index, total, fonts, output_filename):
         gdraw.line([(0, y), (W, y)], fill=(20, 0, 2, alpha))
     img.paste(grad, (0, 0), grad)
 
-    # 2. Top UI Badges (Drawn exclusively in English font)
-    # Story counter badge (Top-Left)
-    draw.rounded_rectangle([(50, 45), (250, 95)], radius=10, fill=(20, 20, 20, 230), outline=(255, 215, 0), width=2)
-    draw.text((70, 58), f"STORY {index}/{total}", font=fonts["badge"], fill=(255, 215, 0))
+    # 2. Top UI Badges
+    draw.rounded_rectangle([(50, 45), (250, 95)], radius=10, fill=(20, 20, 20), outline=(255, 215, 0), width=2)
+    draw.text((70, 58), f"STORY {index}/{total}", font=fonts["badge_en"], fill=(255, 215, 0))
 
-    # AP TS NEWS Logo (Top-Right)
-    draw.rounded_rectangle([(800, 45), (1030, 100)], radius=12, fill=(15, 20, 30, 240), outline=(220, 40, 40), width=2)
-    draw.text((820, 54), "AP", font=fonts["logo"], fill=(235, 45, 45))
-    draw.text((875, 54), "TS NEWS", font=fonts["logo"], fill=(255, 215, 0))
+    # AP TS NEWS Logo
+    draw.rounded_rectangle([(800, 45), (1030, 100)], radius=12, fill=(15, 20, 30), outline=(220, 40, 40), width=2)
+    draw.text((820, 54), "AP", font=fonts["logo_en"], fill=(235, 45, 45))
+    draw.text((875, 54), "TS NEWS", font=fonts["logo_en"], fill=(255, 215, 0))
 
-    # 3. Main Dual-Color Telugu Headline
+    # 3. Dual-Color Telugu Headline
     ft_h, fe_h = fonts["headline"]
     wrapped_headlines = wrap_text_mixed(story["title"], ft_h, fe_h, 980)
     hy = bg_height + 25
@@ -263,7 +259,7 @@ def render_story_slide(story, index, total, fonts, output_filename):
     card_h = 490
     draw.rounded_rectangle([(50, card_y), (1030, card_y + card_h)], radius=14, fill=(26, 2, 4), outline=(130, 15, 20), width=2)
     
-    # Red Header on Card
+    # Red Card Header
     draw.rounded_rectangle([(50, card_y), (1030, card_y + 50)], radius=14, fill=(160, 15, 20))
     ft_ch, fe_ch = fonts["card_header"]
     draw_text_mixed(draw, (75, card_y + 12), "ముఖ్యమైన వివరాలు (KEY HIGHLIGHTS)", ft_ch, fe_ch, fill=(255, 255, 255))
@@ -272,14 +268,14 @@ def render_story_slide(story, index, total, fonts, output_filename):
     ft_b, fe_b = fonts["body"]
     by = card_y + 75
     sample_bullets = [
-        f"ఈ కథనం గురించిన పూర్తి వివరాలు పరిశీలించండి.",
+        "ఈ కథనం గురించిన పూర్తి వివరాలు పరిశీలించండి.",
         f"సోర్స్ రిపోర్ట్: {story['source']} ద్వారా ధృవీకరించబడిన సమాచారం.",
-        f"ప్రజా ప్రయోజనార్థం అందించిన తాజా బులిటెన్ అప్‌డేట్.",
-        f"మరిన్ని నిరంతర వార్తల కోసం మా పేజీని ఫాలో అవ్వండి."
+        "ప్రజా ప్రయోజనార్థం అందించిన తాజా బులిటెన్ అప్‌డేట్.",
+        "మరిన్ని నిరంతర వార్తల కోసం మా పేజీని ఫాలో అవ్వండి."
     ]
 
     for bullet in sample_bullets:
-        draw.text((75, by), "•", font=fe_b, fill=(235, 45, 45))
+        draw.text((75, by), "•", font=fonts["body_en"], fill=(235, 45, 45))
         draw_text_mixed(draw, (105, by), bullet, ft_b, fe_b, fill=(240, 240, 240))
         draw.line([(75, by + 44), (1005, by + 44)], fill=(45, 8, 12), width=1)
         by += 68
@@ -288,10 +284,10 @@ def render_story_slide(story, index, total, fonts, output_filename):
     draw.rectangle([(0, 1260), (W, H)], fill=(10, 0, 2))
     draw.line([(0, 1260), (W, 1260)], fill=(180, 20, 25), width=2)
     
-    ft_f, fe_f = fonts["footer"]
-    draw.text((50, 1285), "AP TS NEWS", font=fe_f, fill=(255, 215, 0))
+    draw.text((50, 1285), "AP TS NEWS", font=fonts["footer_en"], fill=(255, 215, 0))
+    ft_f, fe_f = fonts["footer_te"]
     draw_text_mixed(draw, (190, 1285), "- ప్రజల కోసం.. ప్రజలతో", ft_f, fe_f, fill=(200, 200, 200))
-    draw.text((810, 1285), "SWIPE FOR MORE >", font=fe_f, fill=(255, 215, 0))
+    draw.text((810, 1285), "SWIPE FOR MORE >", font=fonts["footer_en"], fill=(255, 215, 0))
 
     img.save(output_filename, "JPEG", quality=95)
     return output_filename
@@ -300,7 +296,6 @@ def render_story_slide(story, index, total, fonts, output_filename):
 # PUBLIC IMAGE UPLOADER
 # ==========================================
 def upload_slide(filepath):
-    """Uploads slide image to a public host so Instagram Graph API can ingest it."""
     try:
         with open(filepath, "rb") as f:
             res = requests.post("https://d.upaw.se/", files={"file": f}, timeout=30)
@@ -315,7 +310,6 @@ def upload_slide(filepath):
 # INSTAGRAM GRAPH API PUBLISHING
 # ==========================================
 def publish_carousel_to_instagram(image_urls, caption):
-    """Publishes a multi-slide carousel using official Instagram Graph API."""
     if not IG_USER_ID or not IG_ACCESS_TOKEN:
         print("Instagram credentials not found. Saved images locally.")
         return
@@ -323,7 +317,6 @@ def publish_carousel_to_instagram(image_urls, caption):
     print(f"Step 5: Publishing carousel with {len(image_urls)} slides to Instagram...")
     container_ids = []
 
-    # 1. Create individual item containers
     for i, url in enumerate(image_urls):
         print(f"Creating container for slide {i+1}...")
         url_post = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media"
@@ -340,7 +333,6 @@ def publish_carousel_to_instagram(image_urls, caption):
         container_ids.append(cid)
         time.sleep(2)
 
-    # 2. Create parent carousel container
     print("Creating parent carousel container...")
     parent_payload = {
         "media_type": "CAROUSEL",
@@ -354,10 +346,8 @@ def publish_carousel_to_instagram(image_urls, caption):
         print(f"Failed parent container: {res_parent}")
         return
 
-    # Wait for processing
     time.sleep(10)
 
-    # 3. Publish parent carousel
     print(f"Publishing carousel container {parent_cid}...")
     publish_payload = {
         "creation_id": parent_cid,
@@ -377,7 +367,6 @@ def main():
         print("No new stories found. Exiting.")
         sys.exit(0)
 
-    # Render slides
     slide_files = []
     print(f"Rendering {len(stories)} story slides...")
     for idx, story in enumerate(stories, start=1):
@@ -385,7 +374,6 @@ def main():
         render_story_slide(story, idx, len(stories), fonts, filename)
         slide_files.append(filename)
 
-    # Upload slides
     uploaded_urls = []
     for sf in slide_files:
         url = upload_slide(sf)
@@ -403,7 +391,6 @@ def main():
         )
         publish_carousel_to_instagram(uploaded_urls, caption)
 
-        # Update posted history
         history = load_history()
         for s in stories:
             history.append(s["guid"])
