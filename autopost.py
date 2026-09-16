@@ -74,7 +74,7 @@ def is_telugu_char(ch):
     return '\u0c00' <= ch <= '\u0c7f'
 
 def draw_text_mixed(draw, xy, text, font_te, font_en, fill=(255, 255, 255)):
-    """Renders mixed Telugu and English text seamlessly without tofu boxes."""
+    """Renders mixed Telugu and English text without missing font boxes."""
     x, y = xy
     tokens = []
     curr = []
@@ -228,7 +228,7 @@ def render_story_slide(story, index, total, fonts, output_filename):
         gdraw.line([(0, y), (W, y)], fill=(20, 0, 2, alpha))
     img.paste(grad, (0, 0), grad)
 
-    # 2. Top UI Badges (Drawn exclusively in English font)
+    # 2. Top UI Badges (Single English Fonts)
     draw.rounded_rectangle([(50, 45), (250, 95)], radius=10, fill=(20, 20, 20), outline=(255, 215, 0), width=2)
     draw.text((70, 58), f"STORY {index}/{total}", font=fonts["badge_en"], fill=(255, 215, 0))
 
@@ -293,20 +293,47 @@ def render_story_slide(story, index, total, fonts, output_filename):
     return output_filename
 
 # ==========================================
-# PUBLIC IMAGE UPLOADER
+# PUBLIC IMAGE UPLOADER (MULTI-HOST FALLBACK)
 # ==========================================
 def upload_slide(filepath):
-    """Uploads slide image to public host so Instagram can download it."""
+    """Tries Uguu, Catbox, and Tmpfiles so image hosting never fails."""
+    # 1. Primary: Uguu.se
     try:
         with open(filepath, "rb") as f:
-            res = requests.post("https://d.upaw.se/", files={"file": f}, timeout=35)
-            if res.status_code in [200, 201]:
+            res = requests.post("https://uguu.se/upload", files={"files[]": f}, timeout=25)
+            if res.status_code == 200:
                 data = res.json()
-                return data.get("url")
-            else:
-                print(f"Upload returned status {res.status_code}: {res.text}")
+                if data.get("success") and data.get("files"):
+                    return data["files"][0]["url"]
     except Exception as e:
-        print(f"Error uploading {filepath}: {e}")
+        print(f"Uguu upload note on {filepath}: {e}")
+
+    # 2. Fallback 1: Catbox.moe
+    try:
+        with open(filepath, "rb") as f:
+            res = requests.post(
+                "https://catbox.moe/user/api.php",
+                data={"reqtype": "fileupload"},
+                files={"fileToUpload": f},
+                timeout=25
+            )
+            if res.status_code == 200 and res.text.startswith("https://"):
+                return res.text.strip()
+    except Exception as e:
+        print(f"Catbox upload note on {filepath}: {e}")
+
+    # 3. Fallback 2: Tmpfiles.org
+    try:
+        with open(filepath, "rb") as f:
+            res = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f}, timeout=25)
+            if res.status_code == 200:
+                data = res.json()
+                url = data.get("data", {}).get("url")
+                if url:
+                    return url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+    except Exception as e:
+        print(f"Tmpfiles upload note on {filepath}: {e}")
+
     return None
 
 # ==========================================
@@ -314,7 +341,7 @@ def upload_slide(filepath):
 # ==========================================
 def publish_carousel_to_instagram(image_urls, caption):
     if not IG_USER_ID or not IG_ACCESS_TOKEN:
-        raise RuntimeError("Instagram credentials missing. Check repository secrets: INSTAGRAM_ACCOUNT_ID and INSTAGRAM_ACCESS_TOKEN.")
+        raise RuntimeError("Instagram credentials missing in GitHub Secrets (INSTAGRAM_ACCOUNT_ID or INSTAGRAM_ACCESS_TOKEN).")
 
     print(f"Step 5: Publishing carousel with {len(image_urls)} slides to Instagram...")
     container_ids = []
@@ -346,10 +373,9 @@ def publish_carousel_to_instagram(image_urls, caption):
     if not parent_cid:
         raise RuntimeError(f"Failed parent carousel container: {res_parent}")
 
-    # Wait for Instagram media processing
     time.sleep(12)
 
-    print(f"Publishing carousel container {parent_cid} to feed...")
+    print(f"Publishing carousel container {parent_cid} to Instagram feed...")
     publish_payload = {
         "creation_id": parent_cid,
         "access_token": IG_ACCESS_TOKEN
@@ -405,7 +431,6 @@ def main():
     
     publish_carousel_to_instagram(uploaded_urls, caption)
 
-    # Save to history only after successful publish
     history = load_history()
     for s in stories:
         history.append(s["guid"])
