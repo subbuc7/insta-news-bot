@@ -2,10 +2,13 @@ import os
 import sys
 import json
 import time
+import io
+import re
+import html
 import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageFilter
 
 # ==========================================
 # CONFIGURATION & CREDENTIALS
@@ -26,7 +29,6 @@ RSS_FEEDS = [
 # FONT LOADER & DUAL-FONT ENGINE
 # ==========================================
 def setup_fonts():
-    """Downloads Telugu font if missing, and loads both English & Telugu fonts."""
     telugu_font_path = "NotoSansTelugu-Bold.ttf"
     if not os.path.exists(telugu_font_path):
         print("Downloading NotoSansTelugu-Bold.ttf...")
@@ -39,7 +41,6 @@ def setup_fonts():
         except Exception as e:
             print(f"Warning: Could not download Telugu font ({e}). Using system fonts.")
 
-    # Locate English font (DejaVuSans-Bold on Ubuntu / GitHub Actions)
     english_font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     if not os.path.exists(english_font_path):
         english_font_path = "DejaVuSans-Bold.ttf"
@@ -57,12 +58,10 @@ def setup_fonts():
             return fe(size)
 
     return {
-        # Single English fonts for fixed badges, logos, and counters
         "badge_en": fe(22),
         "logo_en": fe(32),
         "footer_en": fe(20),
         "body_en": fe(24),
-        # Font pairs (Telugu, English) for mixed text rendering
         "headline": (ft(40), fe(40)),
         "subhead": (ft(22), fe(22)),
         "card_header": (ft(22), fe(22)),
@@ -74,7 +73,6 @@ def is_telugu_char(ch):
     return '\u0c00' <= ch <= '\u0c7f'
 
 def draw_text_mixed(draw, xy, text, font_te, font_en, fill=(255, 255, 255)):
-    """Renders mixed Telugu and English text without missing font boxes."""
     x, y = xy
     tokens = []
     curr = []
@@ -146,7 +144,7 @@ def wrap_text_mixed(text, font_te, font_en, max_width):
     return lines
 
 # ==========================================
-# HISTORY & NEWS FETCHING
+# HISTORY & NEWS FETCHING WITH MEDIA
 # ==========================================
 def load_history():
     if os.path.exists(HISTORY_FILE):
@@ -161,6 +159,50 @@ def save_history(history):
     with open(HISTORY_FILE, "w") as f:
         json.dump(history[-150:], f, indent=2)
 
+def extract_image_from_xml_item(item):
+    """Checks enclosures, media tags, and description for article photos."""
+    enc = item.find("enclosure")
+    if enc is not None and enc.get("url"):
+        return enc.get("url")
+
+    for tag in [
+        "{http://search.yahoo.com/mrss/}content",
+        "{http://search.yahoo.com/mrss/}thumbnail",
+        "content",
+        "thumbnail"
+    ]:
+        m = item.find(tag)
+        if m is not None and m.get("url"):
+            return m.get("url")
+
+    desc = item.find("description")
+    if desc is not None and desc.text:
+        match = re.search(r'<img[^>]+src=[\'"]([^\'"]+)[\'"]', desc.text)
+        if match:
+            return match.group(1)
+    return None
+
+def fetch_og_image(article_url):
+    """Fetches OpenGraph og:image directly from the news article page."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    try:
+        res = requests.get(article_url, headers=headers, timeout=8, stream=True, allow_redirects=True)
+        content = ""
+        for chunk in res.iter_content(chunk_size=16384):
+            content += chunk.decode("utf-8", errors="ignore")
+            if "</head>" in content.lower() or len(content) > 65536:
+                break
+        match = re.search(r'<meta[^>]+property=[\'"]og:image[\'"][^>]+content=[\'"]([^\'"]+)[\'"]', content, re.IGNORECASE)
+        if not match:
+            match = re.search(r'<meta[^>]+content=[\'"]([^\'"]+)[\'"][^>]+property=[\'"]og:image[\'"]', content, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    except Exception:
+        pass
+    return None
+
 def fetch_top_stories(limit=5):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -168,7 +210,7 @@ def fetch_top_stories(limit=5):
     history = load_history()
     stories = []
 
-    print(f"Step 1: Fetching top {limit} Andhra Pradesh & Telangana stories in Telugu...")
+    print(f"Step 1: Fetching top {limit} Andhra Pradesh & Telangana stories with photos...")
     for feed_name, url in RSS_FEEDS:
         try:
             res = requests.get(url, headers=headers, timeout=12)
@@ -187,11 +229,22 @@ def fetch_top_stories(limit=5):
                 clean_title = title.split(" - ")[0].strip()
                 source = title.split(" - ")[-1].strip() if " - " in title else feed_name
 
+                # Clean summary from description
+                desc = item.find("description")
+                summary = ""
+                if desc is not None and desc.text:
+                    clean_desc = re.sub(r'<[^>]+>', '', desc.text)
+                    summary = html.unescape(clean_desc).strip()
+
+                img_url = extract_image_from_xml_item(item)
+
                 stories.append({
                     "guid": guid,
                     "title": clean_title,
                     "source": source,
-                    "link": link
+                    "link": link,
+                    "summary": summary,
+                    "image_url": img_url
                 })
                 if len(stories) >= limit:
                     return stories
@@ -201,26 +254,51 @@ def fetch_top_stories(limit=5):
     return stories
 
 # ==========================================
-# SLIDE RENDERING (AP TS NEWS TEMPLATE)
+# SLIDE RENDERING (DYNAMIC PHOTOS)
 # ==========================================
 def render_story_slide(story, index, total, fonts, output_filename):
     W, H = 1080, 1350
     img = Image.new("RGB", (W, H), (14, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # 1. Background image (upper 48%)
     bg_height = int(H * 0.48)
-    bg_photo_path = "profile.jpg" if os.path.exists("profile.jpg") else None
-    
-    if bg_photo_path:
-        try:
-            photo = Image.open(bg_photo_path).convert("RGB")
-            photo = photo.resize((W, bg_height), Image.Resampling.LANCZOS)
-            img.paste(photo, (0, 0))
-        except Exception:
-            pass
+    photo = None
 
-    # Smooth dark crimson gradient overlay
+    # 1. Fetch story image (from feed or og:image)
+    img_url = story.get("image_url")
+    if not img_url and story.get("link"):
+        img_url = fetch_og_image(story["link"])
+
+    if img_url:
+        try:
+            print(f"Downloading photo for story {index}: {img_url[:60]}...")
+            img_res = requests.get(img_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
+            if img_res.status_code == 200:
+                raw_img = Image.open(io.BytesIO(img_res.content)).convert("RGB")
+                # Maintain aspect ratio (no squashing)
+                photo = ImageOps.fit(raw_img, (W, bg_height), Image.Resampling.LANCZOS)
+        except Exception as e:
+            print(f"Failed loading story photo ({e}). Using branded fallback.")
+
+    # Fallback: elegant blurred backdrop with centered, un-squashed logo
+    if photo is None:
+        bg_photo_path = "profile.jpg" if os.path.exists("profile.jpg") else None
+        if bg_photo_path:
+            try:
+                logo = Image.open(bg_photo_path).convert("RGB")
+                photo = ImageOps.fit(logo, (W, bg_height)).filter(ImageFilter.GaussianBlur(radius=28))
+                logo_thumb = logo.copy()
+                logo_thumb.thumbnail((int(W * 0.65), int(bg_height * 0.65)), Image.Resampling.LANCZOS)
+                lx = (W - logo_thumb.width) // 2
+                ly = (bg_height - logo_thumb.height) // 2
+                photo.paste(logo_thumb, (lx, ly))
+            except Exception:
+                pass
+
+    if photo:
+        img.paste(photo, (0, 0))
+
+    # Dark crimson gradient transition overlay
     grad = Image.new("RGBA", (W, bg_height), (0, 0, 0, 0))
     gdraw = ImageDraw.Draw(grad)
     for y in range(bg_height):
@@ -228,7 +306,7 @@ def render_story_slide(story, index, total, fonts, output_filename):
         gdraw.line([(0, y), (W, y)], fill=(20, 0, 2, alpha))
     img.paste(grad, (0, 0), grad)
 
-    # 2. Top UI Badges (Single English Fonts)
+    # 2. Top UI Badges
     draw.rounded_rectangle([(50, 45), (250, 95)], radius=10, fill=(20, 20, 20), outline=(255, 215, 0), width=2)
     draw.text((70, 58), f"STORY {index}/{total}", font=fonts["badge_en"], fill=(255, 215, 0))
 
@@ -264,17 +342,20 @@ def render_story_slide(story, index, total, fonts, output_filename):
     ft_ch, fe_ch = fonts["card_header"]
     draw_text_mixed(draw, (75, card_y + 12), "ముఖ్యమైన వివరాలు (KEY HIGHLIGHTS)", ft_ch, fe_ch, fill=(255, 255, 255))
 
-    # Bullets Content
+    # Build Article-Specific Bullet Points
     ft_b, fe_b = fonts["body"]
     by = card_y + 75
-    sample_bullets = [
-        "ఈ కథనం గురించిన పూర్తి వివరాలు పరిశీలించండి.",
-        f"సోర్స్ రిపోర్ట్: {story['source']} ద్వారా ధృవీకరించబడిన సమాచారం.",
-        "ప్రజా ప్రయోజనార్థం అందించిన తాజా బులిటెన్ అప్‌డేట్.",
-        "మరిన్ని నిరంతర వార్తల కోసం మా పేజీని ఫాలో అవ్వండి."
-    ]
 
-    for bullet in sample_bullets:
+    bullets = []
+    if story.get("summary") and len(story["summary"]) > 20:
+        summary_lines = wrap_text_mixed(story["summary"], ft_b, fe_b, 900)
+        bullets.extend(summary_lines[:2])
+
+    bullets.append(f"సోర్స్ రిపోర్ట్: {story['source']} ద్వారా ధృవీకరించబడిన సమాచారం.")
+    bullets.append("ప్రజా ప్రయోజనార్థం అందించిన తాజా బులిటెన్ అప్‌డేట్.")
+    bullets.append("మరిన్ని నిరంతర వార్తల కోసం మా పేజీని ఫాలో అవ్వండి.")
+
+    for bullet in bullets[:4]:
         draw.text((75, by), "•", font=fonts["body_en"], fill=(235, 45, 45))
         draw_text_mixed(draw, (105, by), bullet, ft_b, fe_b, fill=(240, 240, 240))
         draw.line([(75, by + 44), (1005, by + 44)], fill=(45, 8, 12), width=1)
@@ -296,7 +377,6 @@ def render_story_slide(story, index, total, fonts, output_filename):
 # PUBLIC IMAGE UPLOADER (MULTI-HOST FALLBACK)
 # ==========================================
 def upload_slide(filepath):
-    """Tries Uguu, Catbox, and Tmpfiles so image hosting never fails."""
     # 1. Primary: Uguu.se
     try:
         with open(filepath, "rb") as f:
@@ -308,7 +388,7 @@ def upload_slide(filepath):
     except Exception as e:
         print(f"Uguu upload note on {filepath}: {e}")
 
-    # 2. Fallback 1: Catbox.moe
+    # 2. Fallback: Catbox.moe
     try:
         with open(filepath, "rb") as f:
             res = requests.post(
@@ -322,18 +402,6 @@ def upload_slide(filepath):
     except Exception as e:
         print(f"Catbox upload note on {filepath}: {e}")
 
-    # 3. Fallback 2: Tmpfiles.org
-    try:
-        with open(filepath, "rb") as f:
-            res = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f}, timeout=25)
-            if res.status_code == 200:
-                data = res.json()
-                url = data.get("data", {}).get("url")
-                if url:
-                    return url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
-    except Exception as e:
-        print(f"Tmpfiles upload note on {filepath}: {e}")
-
     return None
 
 # ==========================================
@@ -341,7 +409,7 @@ def upload_slide(filepath):
 # ==========================================
 def publish_carousel_to_instagram(image_urls, caption):
     if not IG_USER_ID or not IG_ACCESS_TOKEN:
-        raise RuntimeError("Instagram credentials missing in GitHub Secrets (INSTAGRAM_ACCOUNT_ID or INSTAGRAM_ACCESS_TOKEN).")
+        raise RuntimeError("Instagram credentials missing in GitHub Secrets.")
 
     print(f"Step 5: Publishing carousel with {len(image_urls)} slides to Instagram...")
     container_ids = []
@@ -396,11 +464,9 @@ def main():
     stories = fetch_top_stories(limit=5)
     
     if not stories:
-        print("Notice: No new stories found. All current news items were already posted in previous runs.")
-        print("To force a new post, clear posted_history.json in your repository.")
+        print("Notice: No new stories found. Clear posted_history.json to force re-run.")
         sys.exit(0)
 
-    # Render slides
     slide_files = []
     print(f"Rendering {len(stories)} story slides...")
     for idx, story in enumerate(stories, start=1):
@@ -408,7 +474,6 @@ def main():
         render_story_slide(story, idx, len(stories), fonts, filename)
         slide_files.append(filename)
 
-    # Upload slides
     uploaded_urls = []
     for sf in slide_files:
         url = upload_slide(sf)
